@@ -162,7 +162,18 @@ class DiscordBot(commands.Bot):
         """
         Setup the game status task of the bot.
         """
-        statuses = ["with you!", "with Krypton!", "with humans!"]
+        statuses = [
+        "tracking new seasons!",
+        "calculating loot drops!",
+        "watching ARPG timelines!",
+        "summoning bosses!",
+        "leveling up your notifications!",
+        "preparing the next event!",
+        "exploring dungeons!",
+        "monitoring Path of Exile leagues!",
+        "checking Diablo seasons!",
+        "keeping tabs on Last Epoch!"
+        ]
         await self.change_presence(activity=discord.Game(random.choice(statuses)))
 
     @status_task.before_loop
