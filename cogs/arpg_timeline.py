@@ -78,10 +78,16 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         for s in seasons:
             # Skip if this game's toggle is not explicitly enabled (default is disabled)
             if not game_toggles.get(s.game_slug, 0):
+                self.bot.logger.debug(
+                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} skip=toggle_off"
+                )
                 continue
 
             seen = await db.is_season_seen(guild.id, s.game_slug, s.season_key)
             if seen:
+                self.bot.logger.debug(
+                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} skip=already_seen"
+                )
                 continue
 
             # Determine state: upcoming if start time in future, started otherwise.
@@ -90,19 +96,34 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             # If already started a long time (>1 day) ago and not seen (initial bootstrap) mark as seen silently.
             if not is_upcoming and s.starts_at and now - s.starts_at > timedelta(days=1):
                 await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
+                self.bot.logger.info(
+                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=bootstrap_mark past_days>1"
+                )
                 continue
 
             if is_upcoming:
                 # Always operate in event-only mode: attempt to create an event for upcoming seasons.
+                self.bot.logger.info(
+                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event starts_at={s.starts_at}"
+                )
                 created = await self._create_event_for_season(guild, s)
                 if created:
                     await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
+                    self.bot.logger.info(
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_created"
+                    )
                 else:
                     # Leave unmarked so we retry next poll in case of temporary failure (permissions, outage, etc.).
+                    self.bot.logger.warning(
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_failed will_retry=1"
+                    )
                     pass
             else:
                 # Season already started; since we only create events for future starts we mark it as seen silently.
                 await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
+                self.bot.logger.info(
+                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=mark_seen started_already"
+                )
     # Message/embed sending removed: bot now operates strictly in scheduled-event mode.
 
     async def _create_event_for_season(self, guild: discord.Guild, s: Season) -> bool:
@@ -126,7 +147,9 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             )
             return True
         except Exception as e:
-            self.bot.logger.error(f"Failed to create event in guild {guild.id}: {e}")
+            self.bot.logger.error(
+                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event_error error={e}"
+            )
             return False
 
     # ------------- Commands (guild owner only) -------------
