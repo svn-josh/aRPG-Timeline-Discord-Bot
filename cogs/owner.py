@@ -2,6 +2,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from discord.ext.commands import Context
+import math
+import sys
+import platform
+import asyncio
+from datetime import datetime, timezone
+
+try:
+    import psutil  # type: ignore
+except Exception:  # pragma: no cover - fallback if psutil not installed
+    psutil = None  # type: ignore
 
 
 class Owner(commands.Cog, name="owner"):
@@ -45,6 +55,120 @@ class Owner(commands.Cog, name="owner"):
             description="The scope must be `global` or `guild`.", color=0xE02B2B
         )
         await context.send(embed=embed)
+
+    # ---------------- Stats Command ----------------
+    @app_commands.command(name="stats", description="Show bot statistics (owner only)")
+    async def stats(self, interaction: discord.Interaction) -> None:
+        """Display a comprehensive statistics panel about the bot.
+
+        Includes:
+        - Guild / user counts
+        - Uptime
+        - Command & extension counts
+        - Process resource usage (CPU, memory, handles)
+        - Python / discord.py versions
+        - Database row counts for aRPG tables (best-effort)
+        """
+        # Owner gate (since app_commands doesn't inherit commands.is_owner decorator directly)
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("Owner only.", ephemeral=True)
+
+        now = datetime.now(timezone.utc)
+        start_time = getattr(self.bot, "start_time", None)
+        uptime_delta = (now - start_time) if start_time else None
+        if uptime_delta:
+            days, rem = divmod(int(uptime_delta.total_seconds()), 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes, seconds = divmod(rem, 60)
+            uptime_str = f"{days}d {hours}h {minutes}m {seconds}s"
+        else:
+            uptime_str = "N/A"
+
+        total_guilds = len(self.bot.guilds)
+        total_members = sum(g.member_count or 0 for g in self.bot.guilds)
+        unique_users = len({m.id for g in self.bot.guilds for m in g.members}) if total_guilds <= 50 else "~>50 guilds (skip)"
+        total_commands = len(self.bot.tree.get_commands())
+        loaded_cogs = len(self.bot.cogs)
+
+        # Resource stats
+        proc = None
+        cpu_percent = mem_percent = rss_mb = vms_mb = threads = "N/A"
+        if psutil:
+            try:
+                proc = psutil.Process()
+                with proc.oneshot():
+                    cpu_percent = f"{proc.cpu_percent(interval=0.1):.1f}%"
+                    meminfo = proc.memory_full_info() if hasattr(proc, "memory_full_info") else proc.memory_info()
+                    rss_mb = f"{meminfo.rss / 1024 / 1024:.1f} MB"
+                    vms_mb = f"{meminfo.vms / 1024 / 1024:.1f} MB"
+                    mem_percent = f"{proc.memory_percent():.1f}%"
+                    threads = str(proc.num_threads())
+            except Exception:
+                pass
+
+        py_ver = platform.python_version()
+        dpy_ver = discord.__version__
+        shard_info = f"{self.bot.shard_id} / {self.bot.shard_count}" if getattr(self.bot, "shard_count", None) else "N/A"
+
+        # Database row counts (best effort). We only query if connection exists.
+        db_stats_lines = []
+        db = getattr(self.bot, "database", None)
+        if db and getattr(db, "connection", None):
+            try:
+                async with db.connection.execute("SELECT COUNT(*) FROM guild_settings") as cur:
+                    gs = (await cur.fetchone())[0]
+                async with db.connection.execute("SELECT COUNT(*) FROM guild_games") as cur:
+                    gg = (await cur.fetchone())[0]
+                async with db.connection.execute("SELECT COUNT(*) FROM season_cache") as cur:
+                    sc = (await cur.fetchone())[0]
+                async with db.connection.execute("SELECT COUNT(*) FROM api_tokens") as cur:
+                    at = (await cur.fetchone())[0]
+                async with db.connection.execute("SELECT COUNT(*) FROM api_cache") as cur:
+                    ac = (await cur.fetchone())[0]
+                db_stats_lines.append(f"guild_settings: {gs}")
+                db_stats_lines.append(f"guild_games: {gg}")
+                db_stats_lines.append(f"season_cache: {sc}")
+                db_stats_lines.append(f"api_tokens: {at}")
+                db_stats_lines.append(f"api_cache: {ac}")
+            except Exception as e:  # table maybe missing
+                db_stats_lines.append(f"(error collecting DB stats: {e})")
+        else:
+            db_stats_lines.append("DB not ready")
+
+        embed = discord.Embed(title="Bot Statistics", color=0xBEBEFE, timestamp=now)
+        embed.add_field(name="Uptime", value=uptime_str, inline=True)
+        embed.add_field(name="Guilds", value=str(total_guilds), inline=True)
+        embed.add_field(name="Members (total)", value=str(total_members), inline=True)
+        embed.add_field(name="Unique Users", value=str(unique_users), inline=True)
+        embed.add_field(name="Commands", value=str(total_commands), inline=True)
+        embed.add_field(name="Cogs", value=str(loaded_cogs), inline=True)
+        embed.add_field(name="Shards", value=shard_info, inline=True)
+
+        res_block = (
+            f"CPU: {cpu_percent}\nMemory: {mem_percent}\nRSS: {rss_mb}\nVMS: {vms_mb}\nThreads: {threads}"
+            if psutil else "psutil not installed"
+        )
+        embed.add_field(name="Process", value=f"```\n{res_block}\n```", inline=False)
+
+        embed.add_field(
+            name="Versions",
+            value=(
+                "```\n"
+                f"Python: {py_ver}\n"
+                f"discord.py: {dpy_ver}\n"
+                f"Platform: {platform.system()} {platform.release()}\n"
+                "```"
+            ),
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Database Rows",
+            value="```\n" + "\n".join(db_stats_lines) + "\n```",
+            inline=False,
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @commands.command(
         name="unsync",
