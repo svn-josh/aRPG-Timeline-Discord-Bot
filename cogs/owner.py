@@ -16,10 +16,12 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def sync(self, context: Context, scope: str) -> None:
         """
-        Synchonizes the slash commands.
+        Synchronize (register) the bot's slash commands with Discord.
 
-        :param context: The command context.
-        :param scope: The scope of the sync. Can be `global` or `guild`.
+        Use 'global' to push commands application-wide (can take up to an hour to propagate) or 'guild' for an immediate sync limited to the current server.
+
+        :param context: The invocation context (owner-only).
+        :param scope: Either 'global' or 'guild' specifying the sync target.
         """
 
         if scope == "global":
@@ -54,10 +56,12 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def unsync(self, context: Context, scope: str) -> None:
         """
-        Unsynchonizes the slash commands.
+        Remove previously registered slash commands.
 
-        :param context: The command context.
-        :param scope: The scope of the sync. Can be `global`, `current_guild` or `guild`.
+        'global' clears and re-syncs an empty global command set. 'guild' clears only the current guild's overrides.
+
+        :param context: The invocation context (owner-only).
+        :param scope: One of 'global' or 'guild'.
         """
 
         if scope == "global":
@@ -91,10 +95,12 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def load(self, context: Context, cog: str) -> None:
         """
-        The bot will load the given cog.
+        Dynamically load an extension (cog) by name.
 
-        :param context: The hybrid command context.
-        :param cog: The name of the cog to load.
+        Expects the python module to live under the 'cogs' package (e.g. 'general').
+
+        :param context: The invocation context (owner-only).
+        :param cog: The short module name within the cogs package.
         """
         try:
             await self.bot.load_extension(f"cogs.{cog}")
@@ -117,10 +123,10 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def unload(self, context: Context, cog: str) -> None:
         """
-        The bot will unload the given cog.
+        Unload (detach) a previously loaded extension (cog).
 
-        :param context: The hybrid command context.
-        :param cog: The name of the cog to unload.
+        :param context: The invocation context (owner-only).
+        :param cog: The short module name within the cogs package.
         """
         try:
             await self.bot.unload_extension(f"cogs.{cog}")
@@ -143,10 +149,10 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def reload(self, context: Context, cog: str) -> None:
         """
-        The bot will reload the given cog.
+        Reload a cog in-place (unload then load) to apply code changes without restarting the bot.
 
-        :param context: The hybrid command context.
-        :param cog: The name of the cog to reload.
+        :param context: The invocation context (owner-only).
+        :param cog: The short module name within the cogs package.
         """
         try:
             await self.bot.reload_extension(f"cogs.{cog}")
@@ -168,9 +174,9 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def shutdown(self, context: Context) -> None:
         """
-        Shuts down the bot.
+        Gracefully close the bot's connection to Discord and exit the process.
 
-        :param context: The hybrid command context.
+        :param context: The invocation context (owner-only).
         """
         embed = discord.Embed(description="Shutting down. Bye! :wave:", color=0xBEBEFE)
         await context.send(embed=embed)
@@ -184,10 +190,10 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def say(self, context: Context, *, message: str) -> None:
         """
-        The bot will say anything you want.
+        Echo a plain text message using the bot account (utility / quick testing helper).
 
-        :param context: The hybrid command context.
-        :param message: The message that should be repeated by the bot.
+        :param context: The invocation context (owner-only).
+        :param message: Arbitrary text to send.
         """
         await context.send(message)
 
@@ -199,10 +205,10 @@ class Owner(commands.Cog, name="owner"):
     @commands.is_owner()
     async def embed(self, context: Context, *, message: str) -> None:
         """
-        The bot will say anything you want, but using embeds.
+        Send an embed with the supplied message as its description.
 
-        :param context: The hybrid command context.
-        :param message: The message that should be repeated by the bot.
+        :param context: The invocation context (owner-only).
+        :param message: Embed description content.
         """
         embed = discord.Embed(description=message, color=0xBEBEFE)
         await context.send(embed=embed)

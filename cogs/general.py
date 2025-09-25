@@ -1,11 +1,7 @@
 import platform
-import random
-
-import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
-from discord.ext.commands import Context
 
 
 class FeedbackForm(discord.ui.Modal, title="Feeedback"):
@@ -75,151 +71,107 @@ class General(commands.Cog, name="general"):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @commands.hybrid_command(
-        name="help", description="List all commands the bot has loaded."
-    )
-    async def help(self, context: Context) -> None:
-        embed = discord.Embed(
-            title="Help", description="List of available commands:", color=0xBEBEFE
-        )
-        for i in self.bot.cogs:
-            if i == "owner" and not (await self.bot.is_owner(context.author)):
+    @app_commands.command(name="help", description="List all available slash commands grouped by cog")
+    async def help(self, interaction: discord.Interaction) -> None:
+        """Display all slash commands grouped under their cog names (owner-only cogs hidden for non-owners)."""
+        is_owner = await self.bot.is_owner(interaction.user)
+        embed = discord.Embed(title="Help", description="Slash Commands", color=0xBEBEFE)
+        grouped = {}
+        # Iterate over application commands in the tree
+        for cmd in self.bot.tree.get_commands():
+            if isinstance(cmd, app_commands.ContextMenu):
                 continue
-            cog = self.bot.get_cog(i.lower())
-            commands = cog.get_commands()
-            data = []
-            for command in commands:
-                description = command.description.partition("\n")[0]
-                data.append(f"{command.name} - {description}")
-            help_text = "\n".join(data)
-            embed.add_field(
-                name=i.capitalize(), value=f"```{help_text}```", inline=False
-            )
-        await context.send(embed=embed)
+            # Owner-only filtering (heuristic via checks attribute on bound command)
+            if not is_owner:
+                checks = getattr(cmd, "checks", [])
+                if any(getattr(ch, "__name__", "").startswith("is_owner") for ch in checks):
+                    continue
+            cog_name = getattr(getattr(cmd, 'binding', None), '__cog_name__', None) or 'Other'
+            label = cog_name.title()
+            line = f"/{cmd.name} - {(cmd.description or '').partition('\n')[0]}"
+            grouped.setdefault(label, []).append(line)
+        # Stable order: General first, then alphabetical
+        ordered = []
+        if 'General' in grouped:
+            ordered.append('General')
+        remaining = sorted(k for k in grouped.keys() if k != 'General')
+        ordered.extend(remaining)
+        for section in ordered:
+            lines = sorted(grouped[section])
+            block = "\n".join(lines)
+            if len(block) > 950:
+                # truncate to avoid exceeding field limits
+                truncated = []
+                total = 0
+                for l in lines:
+                    ln = len(l) + 1
+                    if total + ln > 930:
+                        truncated.append("... (truncated)")
+                        break
+                    truncated.append(l)
+                    total += ln
+                block = "\n".join(truncated)
+            embed.add_field(name=section, value=f"```\n{block}```", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @commands.hybrid_command(
-        name="botinfo",
-        description="Get some useful (or not) information about the bot.",
-    )
-    async def botinfo(self, context: Context) -> None:
+    @app_commands.command(name="ping", description="Check bot latency")
+    async def ping(self, interaction: discord.Interaction) -> None:
         """
-        Get some useful (or not) information about the bot.
+        Check the bot's current websocket latency to Discord.
 
-        :param context: The hybrid command context.
-        """
-        embed = discord.Embed(
-            description="Used [Krypton's](https://krypton.ninja) template",
-            color=0xBEBEFE,
-        )
-        embed.set_author(name="Bot Information")
-        embed.add_field(name="Owner:", value="svn_josh", inline=True)
-        embed.add_field(
-            name="Python Version:", value=f"{platform.python_version()}", inline=True
-        )
-        embed.add_field(
-            name="Prefix:",
-            value=f"/ (Slash Commands) or {self.bot.bot_prefix} for normal commands",
-            inline=False,
-        )
-        embed.set_footer(text=f"Requested by {context.author}")
-        await context.send(embed=embed)
-
-    @commands.hybrid_command(
-        name="serverinfo",
-        description="Get some useful (or not) information about the server.",
-    )
-    async def serverinfo(self, context: Context) -> None:
-        """
-        Get some useful (or not) information about the server.
-
-        :param context: The hybrid command context.
-        """
-        roles = [role.name for role in context.guild.roles]
-        num_roles = len(roles)
-        if num_roles > 50:
-            roles = roles[:50]
-            roles.append(f">>>> Displaying [50/{num_roles}] Roles")
-        roles = ", ".join(roles)
-
-        embed = discord.Embed(
-            title="**Server Name:**", description=f"{context.guild}", color=0xBEBEFE
-        )
-        if context.guild.icon is not None:
-            embed.set_thumbnail(url=context.guild.icon.url)
-        embed.add_field(name="Server ID", value=context.guild.id)
-        embed.add_field(name="Member Count", value=context.guild.member_count)
-        embed.add_field(
-            name="Text/Voice Channels", value=f"{len(context.guild.channels)}"
-        )
-        embed.add_field(name=f"Roles ({len(context.guild.roles)})", value=roles)
-        embed.set_footer(text=f"Created at: {context.guild.created_at}")
-        await context.send(embed=embed)
-
-    @commands.hybrid_command(
-        name="ping",
-        description="Check if the bot is alive.",
-    )
-    async def ping(self, context: Context) -> None:
-        """
-        Check if the bot is alive.
-
-        :param context: The hybrid command context.
+        :param interaction: The application command interaction context.
         """
         embed = discord.Embed(
             title="🏓 Pong!",
             description=f"The bot latency is {round(self.bot.latency * 1000)}ms.",
             color=0xBEBEFE,
         )
-        await context.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    @commands.hybrid_command(
-        name="invite",
-        description="Get the invite link of the bot to be able to invite it.",
-    )
-    async def invite(self, context: Context) -> None:
+    @app_commands.command(name="invite", description="Get the bot invite link")
+    async def invite(self, interaction: discord.Interaction) -> None:
         """
-        Get the invite link of the bot to be able to invite it.
+        Provide a link for inviting the bot to another server via a direct message (falls back to ephemeral response if DMs are closed).
 
-        :param context: The hybrid command context.
+        :param interaction: The application command interaction context.
         """
         embed = discord.Embed(
             description=f"Invite me by clicking [here]({self.bot.invite_link}).",
             color=0xD75BF4,
         )
         try:
-            await context.author.send(embed=embed)
-            await context.send("I sent you a private message!")
+            await interaction.user.send(embed=embed)
+            await interaction.response.send_message("I sent you a private message!", ephemeral=True)
         except discord.Forbidden:
-            await context.send(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @commands.hybrid_command(
-        name="server",
-        description="Get the invite link of the discord server of the bot for some support.",
-    )
-    async def server(self, context: Context) -> None:
+    @app_commands.command(name="support", description="Get support server invite link")
+    async def support(self, interaction: discord.Interaction) -> None:
         """
-        Get the invite link of the discord server of the bot for some support.
+        Send the invite link to the bot's official support server via DM (falls back to ephemeral response if DMs are closed).
 
-        :param context: The hybrid command context.
+        :param interaction: The application command interaction context.
         """
         embed = discord.Embed(
             description=f"Join the support server for the bot by clicking [here](https://discord.gg/MA4eGN9Hbu).",
             color=0xD75BF4,
         )
         try:
-            await context.author.send(embed=embed)
-            await context.send("I sent you a private message!")
+            await interaction.user.send(embed=embed)
+            await interaction.response.send_message("I sent you a private message!", ephemeral=True)
         except discord.Forbidden:
-            await context.send(embed=embed)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="feedback", description="Submit a feedback for the owners of the bot"
     )
     async def feedback(self, interaction: discord.Interaction) -> None:
         """
-        Submit a feedback for the owners of the bot.
+        Open a modal where you can submit feedback directly to the bot owner.
 
-        :param context: The hybrid command context.
+        The feedback text (up to 256 characters) is forwarded privately to the application owner.
+
+        :param interaction: The application command interaction context.
         """
         feedback_form = FeedbackForm()
         await interaction.response.send_modal(feedback_form)
@@ -234,13 +186,22 @@ class General(commands.Cog, name="general"):
         )
 
         app_owner = (await self.bot.application_info()).owner
-        await app_owner.send(
-            embed=discord.Embed(
-                title="New Feedback",
-                description=f"{interaction.user} (<@{interaction.user.id}>) has submitted a new feedback:\n```\n{feedback_form.answer}\n```",
-                color=0xBEBEFE,
-            )
+        feedback_embed = discord.Embed(
+            title="New Feedback",
+            description=(
+                f"{interaction.user} (<@{interaction.user.id}>) has submitted a new feedback:\n```\n{feedback_form.answer}\n```"
+            ),
+            color=0xBEBEFE,
         )
+        try:
+            await app_owner.send(embed=feedback_embed)
+        except discord.Forbidden:
+            # Owner DMs closed; log and optionally post in a designated channel if configured later
+            if hasattr(self.bot, "logger"):
+                self.bot.logger.warning("Could not DM owner with feedback (DMs closed).")
+        except Exception as e:
+            if hasattr(self.bot, "logger"):
+                self.bot.logger.error(f"Failed to forward feedback to owner: {e}")
 
 
 async def setup(bot) -> None:

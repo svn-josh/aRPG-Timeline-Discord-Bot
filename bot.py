@@ -50,6 +50,7 @@ intents.presences = True
 
 intents = discord.Intents.default()
 intents.guild_scheduled_events = True
+intents.message_content = True
 
 """
 Uncomment this if you want to use prefix (normal) commands.
@@ -57,7 +58,7 @@ It is recommended to use slash commands and therefore not use prefix commands.
 
 If you want to use prefix commands, make sure to also enable the intent below in the Discord developer portal.
 """
-# intents.message_content = True
+# (message_content intent is explicitly enabled above)
 
 # Setup both of the loggers
 
@@ -173,9 +174,7 @@ class DiscordBot(commands.Bot):
         "leveling up your notifications!",
         "preparing the next event!",
         "exploring dungeons!",
-        "monitoring Path of Exile leagues!",
-        "checking Diablo seasons!",
-        "keeping tabs on Last Epoch!"
+        "⏳arpg-timeline.com"
         ]
         await self.change_presence(activity=discord.Game(random.choice(statuses)))
 
