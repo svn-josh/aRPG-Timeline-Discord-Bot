@@ -132,6 +132,19 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         start = s.starts_at
         if not start or start <= now:
             return False
+        # Preflight permission check: bot must have Manage Events
+        me = guild.me or guild.get_member(self.bot.user.id)  # type: ignore[arg-type]
+        if not me:
+            self.bot.logger.warning(
+                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck member_not_found"
+            )
+            return False
+        perms = getattr(me, "guild_permissions", None)
+        if not perms or not getattr(perms, "manage_events", False):
+            self.bot.logger.warning(
+                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck missing_permission=manage_events"
+            )
+            return False
         end = start + timedelta(hours=2)
         name = f"{s.game_name}: {s.title}"
         description = s.url or "New season tracked by aRPG Timeline"
@@ -146,6 +159,11 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 description=description,
             )
             return True
+        except discord.Forbidden as e:
+            self.bot.logger.error(
+                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event_forbidden detail=Missing_Permissions error={e}"
+            )
+            return False
         except Exception as e:
             self.bot.logger.error(
                 f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event_error error={e}"
