@@ -234,7 +234,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         await interaction.response.send_message(response_msg, ephemeral=False)
 
 
-    @app_commands.command(name="arpg-toggle-game", description="Interactively enable/disable games (default is off)")
+    @app_commands.command(name="arpg-toggle-game", description="Configure which games to track for season notifications")
     async def toggle_game(self, interaction: discord.Interaction):
         """
         Interactive dropdown to toggle games on/off. All games are OFF by default unless explicitly enabled.
@@ -245,15 +245,64 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         """
         ok, err = self._ensure_guild_owner(interaction)
         if not ok:
-            await interaction.response.send_message(err, ephemeral=True)
+            embed = discord.Embed(
+                title="🔒 Permission Required",
+                description=err,
+                color=0xE02B2B
+            )
+            embed.add_field(
+                name="💡 Need Help?",
+                value="Contact a server administrator to configure game notifications.",
+                inline=False
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
+
+        # Create initial loading embed
+        loading_embed = discord.Embed(
+            title="⚡ Loading Game Configuration",
+            description="Fetching available games and current settings...",
+            color=0xFEE75C
+        )
+        loading_embed.set_author(
+            name="Game Toggle Manager",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+        )
+        await interaction.response.send_message(embed=loading_embed, ephemeral=True)
 
         try:
             games = await self.api.get_cached_games()
-        except Exception:
-            games = []
+        except Exception as e:
+            error_embed = discord.Embed(
+                title="❌ Failed to Load Games",
+                description="Unable to fetch available games from the API.",
+                color=0xE02B2B
+            )
+            error_embed.add_field(
+                name="🚨 Error Details",
+                value=f"```\n{type(e).__name__}: {e}\n```",
+                inline=False
+            )
+            error_embed.add_field(
+                name="💡 Troubleshooting",
+                value="• Check your internet connection\n• Try again in a few minutes\n• Contact support if the issue persists",
+                inline=False
+            )
+            await interaction.edit_original_response(embed=error_embed, view=None)
+            return
+
         if not games:
-            await interaction.response.send_message("No games available (cache empty). Try again later.", ephemeral=True)
+            no_games_embed = discord.Embed(
+                title="🎮 No Games Available",
+                description="No games are currently available in the cache.",
+                color=0xFEE75C
+            )
+            no_games_embed.add_field(
+                name="🔄 What to try",
+                value="• Wait a few minutes for the cache to refresh\n• Check back later\n• Contact support if this persists",
+                inline=False
+            )
+            await interaction.edit_original_response(embed=no_games_embed, view=None)
             return
 
         toggles = await self.bot.database.get_guild_games(interaction.guild_id)  # type: ignore[arg-type]
@@ -270,6 +319,52 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 self.build_select()
                 self.update_buttons_state()
 
+            def create_main_embed(self, message: str = None) -> discord.Embed:
+                """Create the main embed for the game toggle interface."""
+                enabled_count = sum(1 for v in self.toggle_map.values() if v)
+                total_count = len(self.games_list)
+                
+                embed = discord.Embed(
+                    title="🎮 Game Configuration Manager",
+                    description=message or "Select games below to toggle their notification status.",
+                    color=0x5865F2
+                )
+                
+                embed.set_author(
+                    name="aRPG Timeline Configuration",
+                    icon_url=self.parent.client.user.avatar.url if self.parent.client.user.avatar else None
+                )
+                
+                # Statistics
+                embed.add_field(
+                    name="📊 Current Status",
+                    value=f"**Enabled Games:** {enabled_count}/{total_count}\n**Tracking:** {'Active' if enabled_count > 0 else 'Inactive'}",
+                    inline=True
+                )
+                
+                # Page info if multiple pages
+                if len(self.games_list) > self.page_size:
+                    total_pages = ((len(self.games_list) - 1) // self.page_size) + 1
+                    embed.add_field(
+                        name="📄 Page Navigation",
+                        value=f"**Current Page:** {self.page + 1}/{total_pages}\n**Games Shown:** {min(self.page_size, len(self.games_list) - (self.page * self.page_size))}",
+                        inline=True
+                    )
+                
+                # Instructions
+                embed.add_field(
+                    name="💡 How to Use",
+                    value="• Use the dropdown to toggle individual games\n• Use buttons for bulk enable/disable\n• Green ✅ = enabled, Red ❌ = disabled",
+                    inline=False
+                )
+                
+                embed.set_footer(
+                    text=f"Session expires in {self.timeout}s • Use /arpg-status to view current settings",
+                    icon_url=self.parent.user.avatar.url if self.parent.user.avatar else None
+                )
+                
+                return embed
+
             # --- Building ---
             def build_options(self) -> List[discord.SelectOption]:
                 start = self.page * self.page_size
@@ -278,8 +373,14 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 for g in segment:
                     enabled = self.toggle_map.get(g.slug, 0)
                     emoji = "✅" if enabled else "❌"
-                    desc = f"{g.slug} - {'on' if enabled else 'off'}"
-                    opts.append(discord.SelectOption(label=g.name[:100], value=g.slug, description=desc[:100], emoji=emoji))
+                    status = "Enabled" if enabled else "Disabled"
+                    desc = f"{status} • {g.slug}"
+                    opts.append(discord.SelectOption(
+                        label=g.name[:100], 
+                        value=g.slug, 
+                        description=desc[:100], 
+                        emoji=emoji
+                    ))
                 return opts
 
             def build_select(self) -> None:
@@ -290,12 +391,18 @@ class ARPGTimeline(commands.Cog, name="arpg"):
 
                 class GameSelect(discord.ui.Select):
                     def __init__(self):
-                        super().__init__(placeholder="Select a game to toggle", min_values=1, max_values=1, options=options)
+                        super().__init__(
+                            placeholder="🎯 Choose a game to toggle...", 
+                            min_values=1, 
+                            max_values=1, 
+                            options=options
+                        )
 
                     async def callback(self_inner, i: discord.Interaction):  # type: ignore[override]
                         slug = self_inner.values[0]
                         current = view_ref.toggle_map.get(slug, 0)
                         new_val = 0 if current else 1
+                        game_name = next((g.name for g in view_ref.games_list if g.slug == slug), slug)
                         
                         # Check permissions if enabling a game
                         if new_val == 1 and i.guild:
@@ -304,12 +411,22 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                             if arpg_cog and hasattr(arpg_cog, '_check_bot_permissions'):
                                 perm_ok, perm_msg = arpg_cog._check_bot_permissions(i.guild)
                                 if not perm_ok:
-                                    embed = discord.Embed(
-                                        title="Permission Check Failed",
-                                        description=perm_msg,
+                                    error_embed = discord.Embed(
+                                        title="🚫 Permission Check Failed",
+                                        description="Cannot enable game notifications due to missing permissions.",
                                         color=0xE02B2B
                                     )
-                                    await i.response.send_message(embed=embed, ephemeral=True)
+                                    error_embed.add_field(
+                                        name="❌ Missing Permissions",
+                                        value=perm_msg,
+                                        inline=False
+                                    )
+                                    error_embed.add_field(
+                                        name="💡 How to Fix",
+                                        value="Use `/check-permissions` for detailed setup instructions.",
+                                        inline=False
+                                    )
+                                    await i.response.send_message(embed=error_embed, ephemeral=True)
                                     return
                         
                         await view_ref.parent.client.database.set_guild_game(view_ref.parent.guild_id, slug, new_val)  # type: ignore[arg-type]
@@ -317,10 +434,18 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                         view_ref.build_select()
                         view_ref.update_buttons_state()
                         
-                        response_msg = f"Toggled {slug}: {'enabled' if new_val else 'disabled'}"
+                        # Create success message
+                        status_icon = "✅" if new_val else "❌"
+                        status_text = "enabled" if new_val else "disabled"
+                        success_msg = f"{status_icon} **{game_name}** has been {status_text}"
+                        
                         if new_val == 1:
-                            response_msg += " ✅ Bot has required permissions!"
-                        await i.response.edit_message(content=response_msg, view=view_ref)
+                            success_msg += " for season notifications!"
+                        else:
+                            success_msg += ". No notifications will be sent for this game."
+                        
+                        embed = view_ref.create_main_embed(success_msg)
+                        await i.response.edit_message(embed=embed, view=view_ref)
 
                 self.select = GameSelect()
                 self.add_item(self.select)
@@ -334,8 +459,8 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                         elif child.custom_id == "next_page":
                             child.disabled = self.page >= total_pages
 
-            # --- Buttons ---
-            @discord.ui.button(label="Prev", style=discord.ButtonStyle.secondary, custom_id="prev_page", row=1)
+            # --- Navigation Buttons ---
+            @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.secondary, custom_id="prev_page", row=1)
             async def prev_page(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
                 if button.disabled:
                     await i.response.defer()
@@ -344,9 +469,11 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                     self.page -= 1
                     self.build_select()
                     self.update_buttons_state()
-                await i.response.edit_message(content=f"Select a game to toggle (page {self.page + 1})", view=self)
+                
+                embed = self.create_main_embed(f"📄 Navigated to page {self.page + 1}")
+                await i.response.edit_message(embed=embed, view=self)
 
-            @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, custom_id="next_page", row=1)
+            @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.secondary, custom_id="next_page", row=1)
             async def next_page(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
                 if button.disabled:
                     await i.response.defer()
@@ -356,9 +483,12 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                     self.page += 1
                     self.build_select()
                     self.update_buttons_state()
-                await i.response.edit_message(content=f"Select a game to toggle (page {self.page + 1})", view=self)
+                
+                embed = self.create_main_embed(f"📄 Navigated to page {self.page + 1}")
+                await i.response.edit_message(embed=embed, view=self)
 
-            @discord.ui.button(label="Enable All", style=discord.ButtonStyle.success, custom_id="enable_all", row=2)
+            # --- Bulk Action Buttons ---
+            @discord.ui.button(label="✅ Enable All", style=discord.ButtonStyle.success, custom_id="enable_all", row=2)
             async def enable_all(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
                 # Check permissions before enabling all games
                 if i.guild:
@@ -366,33 +496,106 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                     if arpg_cog and hasattr(arpg_cog, '_check_bot_permissions'):
                         perm_ok, perm_msg = arpg_cog._check_bot_permissions(i.guild)
                         if not perm_ok:
-                            embed = discord.Embed(
-                                title="Permission Check Failed",
-                                description=perm_msg,
+                            error_embed = discord.Embed(
+                                title="🚫 Permission Check Failed",
+                                description="Cannot enable notifications due to missing bot permissions.",
                                 color=0xE02B2B
                             )
-                            await i.response.send_message(embed=embed, ephemeral=True)
+                            error_embed.add_field(
+                                name="❌ Missing Permissions",
+                                value=perm_msg,
+                                inline=False
+                            )
+                            error_embed.add_field(
+                                name="💡 How to Fix",
+                                value="Use `/check-permissions` for detailed setup instructions.",
+                                inline=False
+                            )
+                            await i.response.send_message(embed=error_embed, ephemeral=True)
                             return
                 
+                # Enable all games
+                games_enabled = 0
                 for g in self.games_list:
                     await self.parent.client.database.set_guild_game(self.parent.guild_id, g.slug, 1)  # type: ignore[arg-type]
                     self.toggle_map[g.slug] = 1
+                    games_enabled += 1
+                
                 self.build_select()
                 self.update_buttons_state()
-                await i.response.edit_message(content="Enabled all games. ✅ Bot has required permissions!", view=self)
+                
+                success_msg = f"🎉 **All {games_enabled} games enabled!** You'll now receive notifications for all aRPG season changes."
+                embed = self.create_main_embed(success_msg)
+                await i.response.edit_message(embed=embed, view=self)
 
-            @discord.ui.button(label="Disable All", style=discord.ButtonStyle.danger, custom_id="disable_all", row=2)
+            @discord.ui.button(label="❌ Disable All", style=discord.ButtonStyle.danger, custom_id="disable_all", row=2)
             async def disable_all(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
+                games_disabled = 0
                 for g in self.games_list:
                     await self.parent.client.database.set_guild_game(self.parent.guild_id, g.slug, 0)  # type: ignore[arg-type]
                     self.toggle_map[g.slug] = 0
+                    games_disabled += 1
+                
                 self.build_select()
                 self.update_buttons_state()
-                await i.response.edit_message(content="Disabled all games.", view=self)
+                
+                success_msg = f"🔕 **All {games_disabled} games disabled.** No season notifications will be sent until you re-enable games."
+                embed = self.create_main_embed(success_msg)
+                await i.response.edit_message(embed=embed, view=self)
+
+            @discord.ui.button(label="🔄 Refresh", style=discord.ButtonStyle.primary, custom_id="refresh", row=2)
+            async def refresh(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
+                # Reload toggles from database to sync with current state
+                try:
+                    fresh_toggles = await self.parent.client.database.get_guild_games(self.parent.guild_id)  # type: ignore[arg-type]
+                    self.toggle_map = fresh_toggles
+                    self.build_select()
+                    self.update_buttons_state()
+                    
+                    embed = self.create_main_embed("🔄 **Configuration refreshed** from database!")
+                    await i.response.edit_message(embed=embed, view=self)
+                except Exception as e:
+                    error_embed = discord.Embed(
+                        title="❌ Refresh Failed",
+                        description="Could not refresh configuration from database.",
+                        color=0xE02B2B
+                    )
+                    error_embed.add_field(
+                        name="🚨 Error Details",
+                        value=f"```\n{type(e).__name__}: {e}\n```",
+                        inline=False
+                    )
+                    await i.response.send_message(embed=error_embed, ephemeral=True)
+
+            async def on_timeout(self) -> None:
+                """Called when the view times out."""
+                try:
+                    timeout_embed = discord.Embed(
+                        title="⏰ Session Expired",
+                        description="This game configuration session has expired.",
+                        color=0xFEE75C
+                    )
+                    timeout_embed.add_field(
+                        name="🔄 Start Again",
+                        value="Use `/arpg-toggle-game` to open a new configuration session.",
+                        inline=False
+                    )
+                    timeout_embed.set_footer(text="Session timed out after 2 minutes")
+                    
+                    # Disable all components
+                    for item in self.children:
+                        item.disabled = True
+                    
+                    await self.parent.edit_original_response(embed=timeout_embed, view=self)
+                except Exception:
+                    # If we can't edit the message, just disable the view
+                    pass
 
         view = GameToggleView(interaction, games, toggles)
-        page_info = "" if len(games) <= 25 else f" (page 1 of {((len(games)-1)//25)+1})"
-        await interaction.response.send_message(f"Select a game to toggle{page_info}:", view=view, ephemeral=True)
+        
+        # Create initial embed
+        initial_embed = view.create_main_embed()
+        await interaction.edit_original_response(embed=initial_embed, view=view)
 
     @app_commands.command(name="arpg-status", description="Show current ARPG notification settings")
     async def status(self, interaction: discord.Interaction):
