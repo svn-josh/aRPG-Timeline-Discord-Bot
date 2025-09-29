@@ -404,23 +404,138 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in a server.", ephemeral=False)
             return
+        
         settings = await self.bot.database.get_guild_settings(interaction.guild_id)  # type: ignore[arg-type]
         toggles = await self.bot.database.get_guild_games(interaction.guild_id)  # type: ignore[arg-type]
+        
         # Fetch full game list to show explicit ON/OFF for each (default OFF if missing)
         try:
             games = await self.api.get_cached_games()
         except Exception:
             games = []
-        embed = discord.Embed(title="aRPG Notifications Settings", color=0x00AA88)
-        embed.add_field(name="Enabled", value=str(bool(settings.get("notifications_enabled", 1))), inline=True)
+        
+        # Check if notifications are enabled
+        notifications_enabled = bool(settings.get("notifications_enabled", 1))
+        
+        # Create main embed
+        embed = discord.Embed(
+            title="⚙️ aRPG Notification Settings",
+            color=0x00AA88 if notifications_enabled else 0xE02B2B,
+            timestamp=discord.utils.utcnow()
+        )
+        
+        # Add server info
+        embed.set_author(
+            name=f"{interaction.guild.name}",
+            icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+        )
+        
+        # Overall status
+        status_emoji = "🟢" if notifications_enabled else "🔴"
+        status_text = "**ENABLED**" if notifications_enabled else "**DISABLED**"
+        embed.add_field(
+            name="📡 Notification Status",
+            value=f"{status_emoji} {status_text}",
+            inline=True
+        )
+        
+        # Check permissions
+        perm_ok, _ = self._check_bot_permissions(interaction.guild)
+        perm_emoji = "✅" if perm_ok else "⚠️"
+        perm_text = "All permissions OK" if perm_ok else "Missing permissions"
+        embed.add_field(
+            name="🔐 Bot Permissions",
+            value=f"{perm_emoji} {perm_text}",
+            inline=True
+        )
+        
+        # Game count summary
         if games:
-            lines = []
+            enabled_count = sum(1 for g in games if toggles.get(g.slug, 0))
+            total_count = len(games)
+            embed.add_field(
+                name="🎮 Games Enabled",
+                value=f"**{enabled_count}** / **{total_count}** games",
+                inline=True
+            )
+        
+        # Detailed game list
+        if games:
+            # Separate enabled and disabled games
+            enabled_games = []
+            disabled_games = []
+            
             for g in games:
                 val = toggles.get(g.slug, 0)
-                lines.append(f"{g.slug}: {'on' if val else 'off'}")
-            embed.add_field(name="Game Toggles", value="\n".join(lines)[:1024], inline=False)
+                game_name = g.name if hasattr(g, 'name') and g.name else g.slug.replace('-', ' ').title()
+                
+                if val:
+                    enabled_games.append(f"✅ **{game_name}**")
+                else:
+                    disabled_games.append(f"❌ {game_name}")
+            
+            # Add enabled games field
+            if enabled_games:
+                enabled_text = "\n".join(enabled_games)
+                if len(enabled_text) > 1024:
+                    enabled_text = enabled_text[:1000] + "\n... (truncated)"
+                embed.add_field(
+                    name="🟢 Enabled Games",
+                    value=enabled_text,
+                    inline=True
+                )
+            else:
+                embed.add_field(
+                    name="🟢 Enabled Games",
+                    value="*No games enabled*",
+                    inline=True
+                )
+            
+            # Add disabled games field (first 10 only to save space)
+            if disabled_games:
+                disabled_text = "\n".join(disabled_games[:10])
+                if len(disabled_games) > 10:
+                    disabled_text += f"\n*... and {len(disabled_games) - 10} more*"
+                embed.add_field(
+                    name="🔴 Disabled Games",
+                    value=disabled_text,
+                    inline=True
+                )
+            
+            # Add empty field for layout (3 columns)
+            embed.add_field(name="\u200b", value="\u200b", inline=True)
         else:
-            embed.add_field(name="Game Toggles", value="(No games cached)", inline=False)
+            embed.add_field(
+                name="🎮 Game Status",
+                value="⚠️ *No games cached - try again later*",
+                inline=False
+            )
+        
+        # Add helpful footer
+        if not notifications_enabled:
+            embed.add_field(
+                name="💡 Quick Start",
+                value="Use `/arpg-enable true` to enable notifications",
+                inline=False
+            )
+        elif not perm_ok:
+            embed.add_field(
+                name="💡 Action Required",
+                value="Use `/arpg-check-permissions` for setup instructions",
+                inline=False
+            )
+        elif games and not any(toggles.get(g.slug, 0) for g in games):
+            embed.add_field(
+                name="💡 Next Step",
+                value="Use `/arpg-toggle-game` to enable specific games",
+                inline=False
+            )
+        
+        embed.set_footer(
+            text="aRPG Timeline Bot • Tip: Use /arpg-toggle-game to configure games",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+        )
+        
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
     @app_commands.command(name="arpg-check-permissions", description="Check if the bot has required permissions")
@@ -431,29 +546,100 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         :param interaction: The application command interaction context.
         """
         if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server.", ephemeral=False)
+            embed = discord.Embed(
+                title="❌ Server Required",
+                description="This command can only be used in a server.",
+                color=0xE02B2B
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=False)
             return
         
         perm_ok, perm_msg = self._check_bot_permissions(interaction.guild)
         
+        # Get bot member info for display
+        bot_member = interaction.guild.me or interaction.guild.get_member(self.bot.user.id)
+        
         if perm_ok:
             embed = discord.Embed(
-                title="✅ Permission Check Passed",
-                description="The bot has all required permissions to create Discord scheduled events for upcoming ARPG seasons!",
-                color=0x00AA88
+                title="✅ Permission Check Complete",
+                description="**All systems operational!** The bot is properly configured and ready to create Discord events for upcoming aRPG seasons.",
+                color=0x00AA88,
+                timestamp=discord.utils.utcnow()
             )
+            
+            embed.set_author(
+                name=f"Checking {self.bot.user.display_name}",
+                icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+            )
+            
+            embed.add_field(
+                name="🔐 Required Permissions",
+                value="✅ **Manage Events** - Create scheduled events\n✅ **Send Messages** - Send notifications\n✅ **Embed Links** - Rich message formatting",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="⚡ What Happens Next",
+                value="• Bot will create Discord events for new seasons\n• Events appear in your server's Events tab\n• Members get notified based on their settings",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🎮 Ready to Configure",
+                value="Use `/arpg-toggle-game` to choose which games to track!",
+                inline=False
+            )
+            
         else:
             embed = discord.Embed(
-                title="❌ Permission Check Failed",
-                description=perm_msg,
-                color=0xE02B2B
+                title="⚠️ Permission Issues Detected",
+                description="The bot is missing required permissions. Events cannot be created until this is fixed.",
+                color=0xE02B2B,
+                timestamp=discord.utils.utcnow()
             )
+            
+            embed.set_author(
+                name=f"Checking {self.bot.user.display_name}",
+                icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
+            )
+            
+            embed.add_field(
+                name="❌ Missing Permission",
+                value="**Manage Events** - Required to create Discord scheduled events",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🔧 How to Fix",
+                value="**Option 1: Update Bot Role**\n1. Go to Server Settings → Roles\n2. Find the bot's role\n3. Enable **Manage Events** permission\n\n**Option 2: Re-invite Bot**\nRe-invite with proper permissions using a new invite link.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="⚠️ Current Impact",
+                value="• Season notifications are enabled but **events won't be created**\n• Bot will keep retrying every 5 minutes\n• Check logs for repeated failure messages",
+                inline=False
+            )
+        
+        # Add role info if available
+        if bot_member and bot_member.roles:
+            top_role = bot_member.top_role
+            embed.add_field(
+                name="🏷️ Bot Role",
+                value=f"**{top_role.name}** (Position: {top_role.position})",
+                inline=True
+            )
+        
+        embed.set_footer(
+            text=f"Checked in {interaction.guild.name} • aRPG Timeline Bot",
+            icon_url=interaction.guild.icon.url if interaction.guild.icon else None
+        )
         
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
     @app_commands.command(name="arpg-seasons", description="List currently active ARPG seasons")
     async def list_seasons(self, interaction: discord.Interaction):
-        """Paginated list of currently active seasons (10 per page) using cached API data.
+        """Paginated list of currently active seasons (8 per page) using cached API data.
 
         Each page shows start/end relative times plus patch notes & timeline links when available.
         """
@@ -462,13 +648,41 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             seasons = await self.fetch_active_seasons()
         except Exception as e:
             self.bot.logger.error(f"Failed to load seasons: {e}")
-            await interaction.followup.send(f"Error: {e}", ephemeral=False)
+            
+            error_embed = discord.Embed(
+                title="❌ Failed to Load Seasons",
+                description=f"Unable to fetch season data from aRPG Timeline API.\n\n**Error:** `{e}`",
+                color=0xE02B2B,
+                timestamp=discord.utils.utcnow()
+            )
+            error_embed.add_field(
+                name="🔄 Try Again",
+                value="This is usually a temporary issue. Try the command again in a few moments.",
+                inline=False
+            )
+            error_embed.set_footer(text="aRPG Timeline Bot")
+            
+            await interaction.followup.send(embed=error_embed, ephemeral=False)
             return
+            
         if not seasons:
-            await interaction.followup.send("No active seasons found.", ephemeral=False)
+            no_seasons_embed = discord.Embed(
+                title="📅 No Active Seasons",
+                description="No aRPG seasons are currently active or upcoming.\n\nThis could mean all current seasons have ended, or new seasons haven't been announced yet.",
+                color=0xFFA500,
+                timestamp=discord.utils.utcnow()
+            )
+            no_seasons_embed.add_field(
+                name="🔄 Check Back Later",
+                value="New seasons are announced regularly. Try checking again later or visit [aRPG Timeline](https://arpg-timeline.com) for updates.",
+                inline=False
+            )
+            no_seasons_embed.set_footer(text="aRPG Timeline Bot")
+            
+            await interaction.followup.send(embed=no_seasons_embed, ephemeral=False)
             return
 
-        per_page = 10
+        per_page = 8  # Reduced for better visual layout
 
         class SeasonsPager(discord.ui.View):
             def __init__(self, outer: 'ARPGTimeline', items: List[Season]):
@@ -480,21 +694,74 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 self._update_buttons_state()
 
             def build_embed(self) -> discord.Embed:
-                embed = discord.Embed(title="Active ARPG Seasons", color=discord.Color.blurple())
+                embed = discord.Embed(
+                    title="🎮 Active aRPG Seasons",
+                    description="Currently active and upcoming Action RPG seasons",
+                    color=0x5865F2,  # Discord blurple
+                    timestamp=discord.utils.utcnow()
+                )
+                
                 start_index = self.page * self.per_page
                 slice_ = self.items[start_index:start_index + self.per_page]
-                for s in slice_:
-                    start_str = discord.utils.format_dt(s.starts_at, style="R") if s.starts_at else "?"
+                
+                for i, s in enumerate(slice_, 1):
+                    # Determine season status
+                    now = discord.utils.utcnow()
+                    if s.starts_at and s.starts_at > now:
+                        status_emoji = "🔮"  # Upcoming
+                        status_text = "Upcoming"
+                    elif s.ends_at and s.ends_at < now:
+                        status_emoji = "✅"  # Ended
+                        status_text = "Ended"
+                    else:
+                        status_emoji = "🔥"  # Active
+                        status_text = "Active"
+                    
+                    # Format dates
+                    start_str = discord.utils.format_dt(s.starts_at, style="R") if s.starts_at else "Unknown"
                     end_str = discord.utils.format_dt(s.ends_at, style="R") if getattr(s, "ends_at", None) else "TBD"
-                    field_name = f"{s.game_name}: {s.title}" if s.title else s.game_name
-                    parts = [f"Start: {start_str}", f"End: {end_str}"]
+                    
+                    # Build field name with status
+                    field_name = f"{status_emoji} **{s.game_name}**"
+                    if s.title and s.title != s.game_name:
+                        field_name += f": {s.title}"
+                    
+                    # Build field value with better formatting
+                    field_lines = [
+                        f"📅 **Starts:** {start_str}",
+                        f"🏁 **Ends:** {end_str}",
+                        f"🎯 **Status:** {status_text}"
+                    ]
+                    
+                    # Add links if available
+                    links = []
                     if getattr(s, "patch_notes_url", None):
-                        parts.append(f"[Patch Notes]({s.patch_notes_url})")
+                        links.append(f"[📝 Patch Notes]({s.patch_notes_url})")
                     if s.url:
-                        parts.append(f"[Timeline]({s.url})")
-                    embed.add_field(name=field_name, value=" | ".join(parts), inline=False)
+                        links.append(f"[🌐 Timeline]({s.url})")
+                    
+                    if links:
+                        field_lines.append(f"🔗 {' • '.join(links)}")
+                    
+                    embed.add_field(
+                        name=field_name,
+                        value="\n".join(field_lines),
+                        inline=False
+                    )
+                
+                # Add summary info
                 total_pages = (len(self.items) - 1) // self.per_page + 1
-                embed.set_footer(text=f"Page {self.page + 1}/{total_pages} • {len(self.items)} seasons")
+                
+                # Count seasons by status
+                now = discord.utils.utcnow()
+                active_count = sum(1 for s in self.items if not s.starts_at or (s.starts_at <= now and (not getattr(s, 'ends_at', None) or getattr(s, 'ends_at', None) > now)))
+                upcoming_count = sum(1 for s in self.items if s.starts_at and s.starts_at > now)
+                
+                embed.set_footer(
+                    text=f"Page {self.page + 1}/{total_pages} • {len(self.items)} total ({active_count} active, {upcoming_count} upcoming) • aRPG Timeline",
+                    icon_url=self.outer.bot.user.avatar.url if self.outer.bot.user.avatar else None
+                )
+                
                 return embed
 
             def _update_buttons_state(self):

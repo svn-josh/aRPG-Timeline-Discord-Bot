@@ -181,7 +181,10 @@ class DiscordBot(commands.Bot):
         "leveling up your notifications!",
         "preparing the next event!",
         "exploring dungeons!",
-        "⏳arpg-timeline.com"
+        "⏳arpg-timeline.com",
+        f"on {len(self.guilds)} servers!",
+        f"with {len(self.users)} adventurers!",
+        "user /help for commands!",
         ]
         await self.change_presence(activity=discord.Game(random.choice(statuses)))
 
