@@ -1,9 +1,6 @@
--- Guild-specific settings for aRPG Timeline notifications
+-- Guild-specific settings for aRPG Timeline notifications (lean schema)
 CREATE TABLE IF NOT EXISTS `guild_settings` (
-  `guild_id` varchar(20) PRIMARY KEY,
-  `channel_id` varchar(20), -- target channel for notifications
-  `mode` varchar(10) NOT NULL DEFAULT 'ping', -- 'ping' or 'event'
-  `all_games` integer NOT NULL DEFAULT 1, -- 1 = notify for all supported games, 0 = use per-game toggles
+  `guild_id` text PRIMARY KEY,
   `notifications_enabled` integer NOT NULL DEFAULT 1, -- master enable/disable
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP

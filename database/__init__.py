@@ -5,92 +5,10 @@ class DatabaseManager:
     def __init__(self, *, connection: aiosqlite.Connection) -> None:
         self.connection = connection
 
-    async def add_warn(
-        self, user_id: int, server_id: int, moderator_id: int, reason: str
-    ) -> int:
-        """
-        This function will add a warn to the database.
-
-        :param user_id: The ID of the user that should be warned.
-        :param reason: The reason why the user should be warned.
-        """
-        rows = await self.connection.execute(
-            "SELECT id FROM warns WHERE user_id=? AND server_id=? ORDER BY id DESC LIMIT 1",
-            (
-                user_id,
-                server_id,
-            ),
-        )
-        async with rows as cursor:
-            result = await cursor.fetchone()
-            warn_id = result[0] + 1 if result is not None else 1
-            await self.connection.execute(
-                "INSERT INTO warns(id, user_id, server_id, moderator_id, reason) VALUES (?, ?, ?, ?, ?)",
-                (
-                    warn_id,
-                    user_id,
-                    server_id,
-                    moderator_id,
-                    reason,
-                ),
-            )
-            await self.connection.commit()
-            return warn_id
-
-    async def remove_warn(self, warn_id: int, user_id: int, server_id: int) -> int:
-        """
-        This function will remove a warn from the database.
-
-        :param warn_id: The ID of the warn.
-        :param user_id: The ID of the user that was warned.
-        :param server_id: The ID of the server where the user has been warned
-        """
-        await self.connection.execute(
-            "DELETE FROM warns WHERE id=? AND user_id=? AND server_id=?",
-            (
-                warn_id,
-                user_id,
-                server_id,
-            ),
-        )
-        await self.connection.commit()
-        rows = await self.connection.execute(
-            "SELECT COUNT(*) FROM warns WHERE user_id=? AND server_id=?",
-            (
-                user_id,
-                server_id,
-            ),
-        )
-        async with rows as cursor:
-            result = await cursor.fetchone()
-            return result[0] if result is not None else 0
-
-    async def get_warnings(self, user_id: int, server_id: int) -> list:
-        """
-        This function will get all the warnings of a user.
-
-        :param user_id: The ID of the user that should be checked.
-        :param server_id: The ID of the server that should be checked.
-        :return: A list of all the warnings of the user.
-        """
-        rows = await self.connection.execute(
-            "SELECT user_id, server_id, moderator_id, reason, strftime('%s', created_at), id FROM warns WHERE user_id=? AND server_id=?",
-            (
-                user_id,
-                server_id,
-            ),
-        )
-        async with rows as cursor:
-            result = await cursor.fetchall()
-            result_list = []
-            for row in result:
-                result_list.append(row)
-            return result_list
-
     # ---------------- aRPG Timeline - Guild Settings ----------------
     async def get_guild_settings(self, guild_id: int) -> dict:
         rows = await self.connection.execute(
-            "SELECT guild_id, channel_id, mode, all_games, notifications_enabled FROM guild_settings WHERE guild_id=?",
+            "SELECT guild_id, notifications_enabled FROM guild_settings WHERE guild_id=?",
             (str(guild_id),),
         )
         async with rows as cursor:
@@ -104,39 +22,12 @@ class DatabaseManager:
                 await self.connection.commit()
                 return {
                     "guild_id": str(guild_id),
-                    "channel_id": None,
-                    "mode": "ping",
-                    "all_games": 1,
                     "notifications_enabled": 1,
                 }
             return {
                 "guild_id": res[0],
-                "channel_id": res[1],
-                "mode": res[2],
-                "all_games": res[3],
-                "notifications_enabled": res[4],
+                "notifications_enabled": res[1],
             }
-
-    async def set_guild_channel(self, guild_id: int | str, channel_id: int | str) -> None:
-        await self.connection.execute(
-            "INSERT INTO guild_settings(guild_id, channel_id) VALUES(?, ?) ON CONFLICT(guild_id) DO UPDATE SET channel_id=excluded.channel_id, updated_at=CURRENT_TIMESTAMP",
-            (str(guild_id), str(channel_id)),
-        )
-        await self.connection.commit()
-
-    async def set_guild_mode(self, guild_id: int | str, mode: str) -> None:
-        await self.connection.execute(
-            "INSERT INTO guild_settings(guild_id, mode) VALUES(?, ?) ON CONFLICT(guild_id) DO UPDATE SET mode=excluded.mode, updated_at=CURRENT_TIMESTAMP",
-            (str(guild_id), mode),
-        )
-        await self.connection.commit()
-
-    async def set_guild_all_games(self, guild_id: int | str, all_games: int) -> None:
-        await self.connection.execute(
-            "INSERT INTO guild_settings(guild_id, all_games) VALUES(?, ?) ON CONFLICT(guild_id) DO UPDATE SET all_games=excluded.all_games, updated_at=CURRENT_TIMESTAMP",
-            (str(guild_id), int(all_games)),
-        )
-        await self.connection.commit()
 
     async def set_guild_enabled(self, guild_id: int | str, enabled: int) -> None:
         await self.connection.execute(
