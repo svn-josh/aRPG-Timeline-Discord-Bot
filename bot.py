@@ -202,6 +202,7 @@ class DiscordBot(commands.Bot):
         self.logger.info(
             f"Running on: {platform.system()} {platform.release()} ({os.name})"
         )
+        self.logger.info("Command logging enabled for both prefix and slash commands")
         self.logger.info("-------------------")
         await self.init_db()
         # Open the DB connection and set DatabaseManager before loading cogs
@@ -223,6 +224,16 @@ class DiscordBot(commands.Bot):
             return
         await self.process_commands(message)
 
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """
+        Log all interactions for debugging purposes (optional detailed logging).
+        """
+        # Only log command interactions to avoid spam from buttons/selects
+        if interaction.type == discord.InteractionType.application_command:
+            command_name = getattr(interaction.command, 'name', 'unknown') if interaction.command else 'unknown'
+            location = f"in {interaction.guild.name} (ID: {interaction.guild.id})" if interaction.guild else "in DMs"
+            self.logger.debug(f"Received /{command_name} interaction {location} from {interaction.user} (ID: {interaction.user.id})")
+
     async def on_command_completion(self, context: Context) -> None:
         """
         The code in this event is executed every time a normal command has been *successfully* executed.
@@ -240,6 +251,61 @@ class DiscordBot(commands.Bot):
             self.logger.info(
                 f"Executed {executed_command} command by {context.author} (ID: {context.author.id}) in DMs"
             )
+
+    async def on_app_command_completion(self, interaction: discord.Interaction, command: discord.app_commands.Command) -> None:
+        """
+        The code in this event is executed every time a slash command has been *successfully* executed.
+
+        :param interaction: The interaction that was executed.
+        :param command: The command that was executed.
+        """
+        command_name = command.name
+        if interaction.guild is not None:
+            self.logger.info(
+                f"Executed /{command_name} slash command in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id})"
+            )
+        else:
+            self.logger.info(
+                f"Executed /{command_name} slash command by {interaction.user} (ID: {interaction.user.id}) in DMs"
+            )
+
+    async def on_app_command_error(self, interaction: discord.Interaction, error: discord.app_commands.AppCommandError) -> None:
+        """
+        The code in this event is executed every time a slash command encounters an error.
+
+        :param interaction: The interaction that failed.
+        :param error: The error that occurred.
+        """
+        command_name = getattr(interaction.command, 'name', 'unknown') if interaction.command else 'unknown'
+        
+        if interaction.guild is not None:
+            self.logger.error(
+                f"Error in /{command_name} slash command in {interaction.guild.name} (ID: {interaction.guild.id}) by {interaction.user} (ID: {interaction.user.id}): {error}"
+            )
+        else:
+            self.logger.error(
+                f"Error in /{command_name} slash command by {interaction.user} (ID: {interaction.user.id}) in DMs: {error}"
+            )
+        
+        # Send a generic error message to the user if they haven't been responded to yet
+        try:
+            if not interaction.response.is_done():
+                embed = discord.Embed(
+                    title="Command Error",
+                    description="An error occurred while executing this command. Please try again later.",
+                    color=0xE02B2B
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                embed = discord.Embed(
+                    title="Command Error",
+                    description="An error occurred while executing this command. Please try again later.",
+                    color=0xE02B2B
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception:
+            # If we can't send an error message, just log it
+            pass
 
     async def on_command_error(self, context: Context, error) -> None:
         """
