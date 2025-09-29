@@ -178,6 +178,26 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             return False, "Only the server owner can use this command."
         return True, None
 
+    def _check_bot_permissions(self, guild: discord.Guild) -> Tuple[bool, Optional[str]]:
+        """Check if the bot has the necessary permissions to create events."""
+        me = guild.me or guild.get_member(self.bot.user.id)  # type: ignore[arg-type]
+        if not me:
+            return False, "Bot member not found in guild."
+        
+        perms = getattr(me, "guild_permissions", None)
+        if not perms or not getattr(perms, "manage_events", False):
+            return False, (
+                "⚠️ **Missing Permission: Manage Events**\n\n"
+                "The bot needs the **Manage Events** permission to create Discord scheduled events for upcoming seasons.\n\n"
+                "**How to fix:**\n"
+                "1. Go to Server Settings → Roles\n"
+                "2. Find the bot's role\n"
+                "3. Enable **Manage Events** permission\n"
+                "4. Or re-invite the bot with proper permissions\n\n"
+                "Without this permission, the bot will keep retrying but events won't be created."
+            )
+        return True, None
+
 
     @app_commands.command(name="arpg-enable", description="Enable or disable all season notifications")
     @app_commands.describe(enabled="Enable or disable all notifications for this server")
@@ -194,8 +214,24 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         if not ok:
             await interaction.response.send_message(err, ephemeral=False)
             return
+        
+        # Check permissions if enabling notifications
+        if enabled and interaction.guild:
+            perm_ok, perm_msg = self._check_bot_permissions(interaction.guild)
+            if not perm_ok:
+                embed = discord.Embed(
+                    title="Permission Check Failed",
+                    description=perm_msg,
+                    color=0xE02B2B
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=False)
+                return
+        
         await self.bot.database.set_guild_enabled(interaction.guild_id, 1 if enabled else 0)  # type: ignore[arg-type]
-        await interaction.response.send_message(f"Notifications {'enabled' if enabled else 'disabled'}.", ephemeral=False)
+        response_msg = f"Notifications {'enabled' if enabled else 'disabled'}."
+        if enabled:
+            response_msg += " ✅ Bot has required permissions!"
+        await interaction.response.send_message(response_msg, ephemeral=False)
 
 
     @app_commands.command(name="arpg-toggle-game", description="Interactively enable/disable games (default is off)")
@@ -260,11 +296,31 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                         slug = self_inner.values[0]
                         current = view_ref.toggle_map.get(slug, 0)
                         new_val = 0 if current else 1
+                        
+                        # Check permissions if enabling a game
+                        if new_val == 1 and i.guild:
+                            # Get the ARPG cog to access permission check method
+                            arpg_cog = view_ref.parent.client.get_cog('arpg')
+                            if arpg_cog and hasattr(arpg_cog, '_check_bot_permissions'):
+                                perm_ok, perm_msg = arpg_cog._check_bot_permissions(i.guild)
+                                if not perm_ok:
+                                    embed = discord.Embed(
+                                        title="Permission Check Failed",
+                                        description=perm_msg,
+                                        color=0xE02B2B
+                                    )
+                                    await i.response.send_message(embed=embed, ephemeral=True)
+                                    return
+                        
                         await view_ref.parent.client.database.set_guild_game(view_ref.parent.guild_id, slug, new_val)  # type: ignore[arg-type]
                         view_ref.toggle_map[slug] = new_val
                         view_ref.build_select()
                         view_ref.update_buttons_state()
-                        await i.response.edit_message(content=f"Toggled {slug}: {'enabled' if new_val else 'disabled'}", view=view_ref)
+                        
+                        response_msg = f"Toggled {slug}: {'enabled' if new_val else 'disabled'}"
+                        if new_val == 1:
+                            response_msg += " ✅ Bot has required permissions!"
+                        await i.response.edit_message(content=response_msg, view=view_ref)
 
                 self.select = GameSelect()
                 self.add_item(self.select)
@@ -304,12 +360,26 @@ class ARPGTimeline(commands.Cog, name="arpg"):
 
             @discord.ui.button(label="Enable All", style=discord.ButtonStyle.success, custom_id="enable_all", row=2)
             async def enable_all(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
+                # Check permissions before enabling all games
+                if i.guild:
+                    arpg_cog = self.parent.client.get_cog('arpg')
+                    if arpg_cog and hasattr(arpg_cog, '_check_bot_permissions'):
+                        perm_ok, perm_msg = arpg_cog._check_bot_permissions(i.guild)
+                        if not perm_ok:
+                            embed = discord.Embed(
+                                title="Permission Check Failed",
+                                description=perm_msg,
+                                color=0xE02B2B
+                            )
+                            await i.response.send_message(embed=embed, ephemeral=True)
+                            return
+                
                 for g in self.games_list:
                     await self.parent.client.database.set_guild_game(self.parent.guild_id, g.slug, 1)  # type: ignore[arg-type]
                     self.toggle_map[g.slug] = 1
                 self.build_select()
                 self.update_buttons_state()
-                await i.response.edit_message(content="Enabled all games.", view=self)
+                await i.response.edit_message(content="Enabled all games. ✅ Bot has required permissions!", view=self)
 
             @discord.ui.button(label="Disable All", style=discord.ButtonStyle.danger, custom_id="disable_all", row=2)
             async def disable_all(self, i: discord.Interaction, button: discord.ui.Button):  # type: ignore[override]
@@ -351,6 +421,34 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             embed.add_field(name="Game Toggles", value="\n".join(lines)[:1024], inline=False)
         else:
             embed.add_field(name="Game Toggles", value="(No games cached)", inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=False)
+
+    @app_commands.command(name="arpg-check-permissions", description="Check if the bot has required permissions")
+    async def check_permissions(self, interaction: discord.Interaction):
+        """
+        Check if the bot has the necessary permissions to create Discord scheduled events.
+
+        :param interaction: The application command interaction context.
+        """
+        if not interaction.guild:
+            await interaction.response.send_message("This command can only be used in a server.", ephemeral=False)
+            return
+        
+        perm_ok, perm_msg = self._check_bot_permissions(interaction.guild)
+        
+        if perm_ok:
+            embed = discord.Embed(
+                title="✅ Permission Check Passed",
+                description="The bot has all required permissions to create Discord scheduled events for upcoming ARPG seasons!",
+                color=0x00AA88
+            )
+        else:
+            embed = discord.Embed(
+                title="❌ Permission Check Failed",
+                description=perm_msg,
+                color=0xE02B2B
+            )
+        
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
     @app_commands.command(name="arpg-seasons", description="List currently active ARPG seasons")
