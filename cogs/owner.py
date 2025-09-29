@@ -25,14 +25,14 @@ class Owner(commands.Cog, name="owner"):
     )
     @app_commands.describe(scope="The scope of the sync. Can be `global` or `guild`")
     @commands.is_owner()
-    async def sync(self, context: Context, scope: str) -> None:
+    async def sync_prefix(self, context: Context, scope: str = "global") -> None:
         """
         Synchronize (register) the bot's slash commands with Discord.
 
         Use 'global' to push commands application-wide (can take up to an hour to propagate) or 'guild' for an immediate sync limited to the current server.
 
         :param context: The invocation context (owner-only).
-        :param scope: Either 'global' or 'guild' specifying the sync target.
+        :param scope: Either 'global' or 'guild' specifying the sync target. Defaults to 'global'.
         """
 
         if scope == "global":
@@ -199,204 +199,22 @@ class Owner(commands.Cog, name="owner"):
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # ---------------- Sync Commands ----------------
-    @app_commands.command(name="sync", description="Sync application commands to Discord (owner only)")
-    async def sync(self, interaction: discord.Interaction) -> None:
-        """Sync the app command tree to Discord.
-
-        This will push all registered application commands (slash commands)
-        to Discord so they become available for use.
-        """
-        if not await self.bot.is_owner(interaction.user):
-            embed = discord.Embed(
-                title="🔒 Access Denied",
-                description="This command is restricted to bot owners only.",
-                color=0xE02B2B
-            )
-            return await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        await interaction.response.defer(ephemeral=True)
-
-        embed = discord.Embed(
-            title="⚡ Command Sync Starting",
-            description="Syncing application commands to Discord...",
-            color=0xFEE75C
-        )
-        embed.set_author(
-            name="Command Synchronization",
-            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-        try:
-            start_time = time.time()
-            synced_cmds = await self.bot.tree.sync()
-            sync_duration = (time.time() - start_time) * 1000  # Convert to ms
-
-            embed = discord.Embed(
-                title="✅ Command Sync Complete",
-                description=f"Successfully synced **{len(synced_cmds)}** application commands to Discord.",
-                color=0x57F287
-            )
-            
-            embed.add_field(
-                name="📊 Sync Details",
-                value=f"**Commands Synced:** {len(synced_cmds)}\n**Duration:** {sync_duration:.1f}ms\n**Status:** Active",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="⏰ Propagation Time",
-                value="Commands may take up to **1 hour** to appear in all servers due to Discord's caching.",
-                inline=True
-            )
-
-            if synced_cmds:
-                cmd_list = [f"• `/{cmd.name}` - {getattr(cmd, 'description', 'No description')}" for cmd in synced_cmds[:10]]
-                if len(synced_cmds) > 10:
-                    cmd_list.append(f"• ... and {len(synced_cmds) - 10} more commands")
-                
-                embed.add_field(
-                    name="🔧 Synced Commands",
-                    value="\n".join(cmd_list),
-                    inline=False
-                )
-
-            embed.set_footer(
-                text=f"Executed by {interaction.user.display_name}",
-                icon_url=interaction.user.avatar.url if interaction.user.avatar else None
-            )
-            embed.timestamp = datetime.now(timezone.utc)
-
-            await interaction.edit_original_response(embed=embed)
-        except Exception as e:
-            embed = discord.Embed(
-                title="❌ Command Sync Failed",
-                description=f"An error occurred while syncing commands:",
-                color=0xE02B2B
-            )
-            embed.add_field(
-                name="🚨 Error Details",
-                value=f"```\n{type(e).__name__}: {e}\n```",
-                inline=False
-            )
-            embed.add_field(
-                name="💡 Troubleshooting",
-                value="• Check bot permissions\n• Verify bot is properly authenticated\n• Try again in a few minutes",
-                inline=False
-            )
-            embed.set_footer(text="Sync failed - check logs for more details")
-            embed.timestamp = datetime.now(timezone.utc)
-            
-            await interaction.edit_original_response(embed=embed)
-
-    @app_commands.command(name="app-unsync", description="Clear all application commands from Discord (owner only)")
-    async def app_unsync(self, interaction: discord.Interaction) -> None:
-        """Clear all application commands from Discord.
-
-        WARNING: This will remove all slash commands from Discord.
-        They will no longer be available until you sync again.
-        """
-        if not await self.bot.is_owner(interaction.user):
-            embed = discord.Embed(
-                title="🔒 Access Denied",
-                description="This command is restricted to bot owners only.",
-                color=0xE02B2B
-            )
-            return await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        await interaction.response.defer(ephemeral=True)
-
-        embed = discord.Embed(
-            title="⚠️ Command Unsync Starting",
-            description="Clearing all application commands from Discord...",
-            color=0xFEE75C
-        )
-        embed.add_field(
-            name="🚨 Warning",
-            value="This will remove **ALL** slash commands from Discord until you sync again.",
-            inline=False
-        )
-        embed.set_author(
-            name="Command Removal",
-            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None
-        )
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-        try:
-            start_time = time.time()
-            self.bot.tree.clear_commands()
-            await self.bot.tree.sync()
-            unsync_duration = (time.time() - start_time) * 1000  # Convert to ms
-
-            embed = discord.Embed(
-                title="✅ Command Unsync Complete",
-                description="Successfully cleared all application commands from Discord.",
-                color=0x57F287
-            )
-            
-            embed.add_field(
-                name="📊 Unsync Details",
-                value=f"**Duration:** {unsync_duration:.1f}ms\n**Status:** Commands Removed\n**Effect:** Immediate",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="🔄 Next Steps",
-                value="Use `/sync` command to restore application commands when ready.",
-                inline=True
-            )
-
-            embed.add_field(
-                name="⚠️ Important Note",
-                value="All slash commands are now **disabled** until you run `/sync` again.",
-                inline=False
-            )
-
-            embed.set_footer(
-                text=f"Executed by {interaction.user.display_name}",
-                icon_url=interaction.user.avatar.url if interaction.user.avatar else None
-            )
-            embed.timestamp = datetime.now(timezone.utc)
-
-            await interaction.edit_original_response(embed=embed)
-        except Exception as e:
-            embed = discord.Embed(
-                title="❌ Command Unsync Failed",
-                description=f"An error occurred while clearing commands:",
-                color=0xE02B2B
-            )
-            embed.add_field(
-                name="🚨 Error Details",
-                value=f"```\n{type(e).__name__}: {e}\n```",
-                inline=False
-            )
-            embed.add_field(
-                name="💡 Troubleshooting",
-                value="• Check bot permissions\n• Verify bot connectivity\n• Try again in a few minutes",
-                inline=False
-            )
-            embed.set_footer(text="Unsync failed - check logs for more details")
-            embed.timestamp = datetime.now(timezone.utc)
-            
-            await interaction.edit_original_response(embed=embed)
-
     @commands.command(
         name="unsync",
         description="Unsynchonizes the slash commands.",
     )
     @app_commands.describe(
-        scope="The scope of the sync. Can be `global`, `current_guild` or `guild`"
+        scope="The scope of the sync. Can be `global` or `guild`"
     )
     @commands.is_owner()
-    async def unsync(self, context: Context, scope: str) -> None:
+    async def unsync(self, context: Context, scope: str = "global") -> None:
         """
         Remove previously registered slash commands.
 
         'global' clears and re-syncs an empty global command set. 'guild' clears only the current guild's overrides.
 
         :param context: The invocation context (owner-only).
-        :param scope: One of 'global' or 'guild'.
+        :param scope: One of 'global' or 'guild'. Defaults to 'global'.
         """
 
         if scope == "global":
