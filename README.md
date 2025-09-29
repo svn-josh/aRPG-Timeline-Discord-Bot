@@ -1,6 +1,6 @@
 # aRPG Timeline Discord Bot
 
-[![Discord](https://img.shields.io/discord/YOUR_GUILD_ID?color=7289da&logo=discord&logoColor=white)](https://discord.gg/YOUR_INVITE)
+[![Discord](https://img.shields.io/discord/1258784665771311126?color=7289da&logo=discord&logoColor=white)](https://discord.gg/MA4eGN9Hbu)
 [![License](https://img.shields.io/github/license/svn-josh/aRPG-Timeline-Discord-Bot)](LICENSE)
 [![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
 
