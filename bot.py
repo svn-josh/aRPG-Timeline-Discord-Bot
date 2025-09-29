@@ -134,12 +134,17 @@ class DiscordBot(commands.Bot):
         self.bot_prefix = os.getenv("PREFIX")
         self.invite_link = os.getenv("INVITE_LINK")
         # Uptime tracking (UTC aware start time stored at instantiation)
-        import datetime as _dt, zoneinfo as _zi  # stdlib
+        import datetime as _dt
         try:
-            self.start_time = _dt.datetime.now(_zi.ZoneInfo("UTC"))
-        except Exception:
-            # Fallback to naive UTC if zoneinfo not available for some reason
-            self.start_time = _dt.datetime.utcnow()
+            self.start_time = _dt.datetime.now(_dt.timezone.utc)
+        except AttributeError:
+            try:
+                # Fallback to zoneinfo for Python 3.9+
+                import zoneinfo as _zi
+                self.start_time = _dt.datetime.now(_zi.ZoneInfo("UTC"))
+            except (ImportError, Exception):
+                # Final fallback to naive UTC for older Python versions
+                self.start_time = _dt.datetime.utcnow()
 
     async def init_db(self) -> None:
         async with aiosqlite.connect(

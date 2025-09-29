@@ -25,7 +25,7 @@ class Owner(commands.Cog, name="owner"):
     )
     @app_commands.describe(scope="The scope of the sync. Can be `global` or `guild`")
     @commands.is_owner()
-    async def sync_prefix(self, context: Context, scope: str = "global") -> None:
+    async def sync(self, context: Context, scope: str = "global") -> None:
         """
         Synchronize (register) the bot's slash commands with Discord.
 
