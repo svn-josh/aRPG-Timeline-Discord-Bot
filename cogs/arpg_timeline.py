@@ -682,7 +682,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             await interaction.followup.send(embed=no_seasons_embed, ephemeral=False)
             return
 
-        per_page = 8  # Reduced for better visual layout
+        per_page = 5  # Reduced for better visual layout
 
         class SeasonsPager(discord.ui.View):
             def __init__(self, outer: 'ARPGTimeline', items: List[Season]):
