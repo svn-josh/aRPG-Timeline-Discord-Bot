@@ -132,7 +132,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         start = s.starts_at
         if not start or start <= now:
             return False
-        # Preflight permission check: bot must have Manage Events
+        # Preflight permission check: bot must have Manage Events and Create Events
         me = guild.me or guild.get_member(self.bot.user.id)  # type: ignore[arg-type]
         if not me:
             self.bot.logger.warning(
@@ -140,9 +140,11 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             )
             return False
         perms = getattr(me, "guild_permissions", None)
-        if not perms or not getattr(perms, "manage_events", False):
+        has_manage = bool(getattr(perms, "manage_events", False)) if perms else False
+        has_create = bool(getattr(perms, "create_events", False)) if perms else False
+        if not perms or not (has_manage and has_create):
             self.bot.logger.warning(
-                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck missing_permission=manage_events"
+                f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck missing_permissions=manage_events,create_events"
             )
             return False
         end = start + timedelta(hours=2)
@@ -185,16 +187,18 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             return False, "Bot member not found in guild."
         
         perms = getattr(me, "guild_permissions", None)
-        if not perms or not getattr(perms, "manage_events", False):
+        has_manage = bool(getattr(perms, "manage_events", False)) if perms else False
+        has_create = bool(getattr(perms, "create_events", False)) if perms else False
+        if not perms or not (has_manage and has_create):
             return False, (
-                "⚠️ **Missing Permission: Manage Events**\n\n"
-                "The bot needs the **Manage Events** permission to create Discord scheduled events for upcoming seasons.\n\n"
+                "⚠️ **Missing Permissions: Manage Events and Create Events**\n\n"
+                "The bot needs both the **Manage Events** and **Create Events** permissions to create Discord scheduled events for upcoming seasons.\n\n"
                 "**How to fix:**\n"
                 "1. Go to Server Settings → Roles\n"
                 "2. Find the bot's role\n"
-                "3. Enable **Manage Events** permission\n"
+                "3. Enable **Manage Events** and **Create Events** permissions\n"
                 "4. Or re-invite the bot with proper permissions\n\n"
-                "Without this permission, the bot will keep retrying but events won't be created."
+                "Without both permissions, the bot will keep retrying but events won't be created."
             )
         return True, None
 
@@ -777,7 +781,12 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             
             embed.add_field(
                 name="🔐 Required Permissions",
-                value="✅ **Manage Events** - Create scheduled events\n✅ **Send Messages** - Send notifications\n✅ **Embed Links** - Rich message formatting",
+                value=(
+                    "✅ **Manage Events** - Manage scheduled events\n"
+                    "✅ **Create Events** - Create scheduled events\n"
+                    "✅ **Send Messages** - Send notifications\n"
+                    "✅ **Embed Links** - Rich message formatting"
+                ),
                 inline=False
             )
             
@@ -808,13 +817,20 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             
             embed.add_field(
                 name="❌ Missing Permission",
-                value="**Manage Events** - Required to create Discord scheduled events",
+                value="**Manage Events** and **Create Events** - Required to create Discord scheduled events",
                 inline=False
             )
             
             embed.add_field(
                 name="🔧 How to Fix",
-                value="**Option 1: Update Bot Role**\n1. Go to Server Settings → Roles\n2. Find the bot's role\n3. Enable **Manage Events** permission\n\n**Option 2: Re-invite Bot**\nRe-invite with proper permissions using a new invite link.",
+                value=(
+                    "**Option 1: Update Bot Role**\n"
+                    "1. Go to Server Settings → Roles\n"
+                    "2. Find the bot's role\n"
+                    "3. Enable **Manage Events** and **Create Events** permissions\n\n"
+                    "**Option 2: Re-invite Bot**\n"
+                    "Re-invite with proper permissions using a new invite link."
+                ),
                 inline=False
             )
             
