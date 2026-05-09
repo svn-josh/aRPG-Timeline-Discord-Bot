@@ -144,6 +144,15 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 )
     # Message/embed sending removed: bot now operates strictly in scheduled-event mode.
 
+    def _build_event_description(self, s: Season) -> str:
+        parts = []
+        if s.url:
+            parts.append(f"🔗 [Season info]({s.url})")
+        if s.patch_notes_url:
+            parts.append(f"📋 [Patch notes]({s.patch_notes_url})")
+        parts.append("\n[Tracked by aRPG Timeline](https://www.arpg-timeline.com)")
+        return "\n".join(parts)
+
     async def _create_event_for_season(self, guild: discord.Guild, s: Season) -> Optional[int]:
         # Create an external scheduled event if start time is in the future; allow any future start
         now = discord.utils.utcnow()
@@ -167,7 +176,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             return None
         end = start + timedelta(hours=2)
         name = f"{s.game_name}: {s.title}"
-        description = s.url or "New season tracked by aRPG Timeline"
+        description = self._build_event_description(s)
         try:
             event = await guild.create_scheduled_event(
                 name=name,
@@ -201,7 +210,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             )
             return False
         name = f"{s.game_name}: {s.title}"
-        description = s.url or "New season tracked by aRPG Timeline"
+        description = self._build_event_description(s)
         end = (s.starts_at + timedelta(hours=2)) if s.starts_at else None
         try:
             await event.edit(name=name, description=description, start_time=s.starts_at, end_time=end)
