@@ -3,6 +3,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import aiohttp
 
@@ -511,3 +512,22 @@ class ARPGApiClient:
                 if self.logger:
                     self.logger.warning(f"Season cache write failed: {e}")
         return seasons
+
+    async def fetch_og_image(self, season_key: str) -> Optional[bytes]:
+        if not API_BASE:
+            return None
+        parsed = urlparse(API_BASE)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        url = f"{origin}/api/og/discord?season={season_key}"
+        try:
+            sess = await self.get_session()
+            async with sess.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    if self.logger:
+                        self.logger.warning(f"OG image fetch failed HTTP {resp.status} url={url}")
+                    return None
+                return await resp.read()
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"OG image fetch error url={url} error={e}")
+            return None

@@ -177,6 +177,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         end = start + timedelta(hours=2)
         name = f"{s.game_name}: {s.title}"
         description = self._build_event_description(s)
+        image = await self.api.fetch_og_image(s.season_key)
         try:
             event = await guild.create_scheduled_event(
                 name=name,
@@ -186,6 +187,7 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 entity_type=discord.EntityType.external,
                 location="aRPG Timeline",
                 description=description,
+                image=image,
             )
             return event.id
         except discord.Forbidden as e:
@@ -212,8 +214,9 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         name = f"{s.game_name}: {s.title}"
         description = self._build_event_description(s)
         end = (s.starts_at + timedelta(hours=2)) if s.starts_at else None
+        image = await self.api.fetch_og_image(s.season_key)
         try:
-            await event.edit(name=name, description=description, start_time=s.starts_at, end_time=end)
+            await event.edit(name=name, description=description, start_time=s.starts_at, end_time=end, image=image)
             return True
         except Exception as e:
             self.bot.logger.error(
