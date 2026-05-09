@@ -42,8 +42,8 @@ class ARPGTimeline(commands.Cog, name="arpg"):
         # Delegate to API client cached seasons (standard TTL)
         return await self.api.get_cached_active_seasons()
 
-    # 5-minute poll
-    @tasks.loop(minutes=5.0)
+    # 15-minute poll
+    @tasks.loop(minutes=15.0)
     async def poll_seasons_task(self) -> None:
         await self.bot.wait_until_ready()
         # Ensure database is set
@@ -83,16 +83,36 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 )
                 continue
 
-            seen = await db.is_season_seen(guild.id, s.game_slug, s.season_key)
-            if seen:
-                self.bot.logger.debug(
-                    f"guild={guild.id} game={s.game_slug} season_key={s.season_key} skip=already_seen"
-                )
-                continue
-
             # Determine state: upcoming if start time in future, started otherwise.
             is_upcoming = bool(s.starts_at and s.starts_at > now)
 
+            cache_entry = await db.get_season_cache_entry(guild.id, s.game_slug, s.season_key)
+
+            if cache_entry is not None:
+                # Already seen — check if metadata changed and event needs updating
+                stored_lm = cache_entry.get("last_modified")
+                api_lm = s.last_modified.isoformat() if s.last_modified else None
+                if not is_upcoming or stored_lm == api_lm:
+                    self.bot.logger.debug(
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} skip=already_seen"
+                    )
+                    continue
+                stored_event_id = int(cache_entry["discord_event_id"]) if cache_entry.get("discord_event_id") else None
+                new_event_id = stored_event_id
+                if stored_event_id:
+                    updated = await self._update_event_for_season(guild, s, stored_event_id)
+                    if not updated:
+                        new_event_id = await self._create_event_for_season(guild, s)
+                else:
+                    new_event_id = await self._create_event_for_season(guild, s)
+                if new_event_id is not None:
+                    await db.update_season_cache(guild.id, s.game_slug, s.season_key, str(new_event_id), api_lm)
+                    self.bot.logger.info(
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_updated event_id={new_event_id}"
+                    )
+                continue
+
+            # New season — bootstrap or create
             # If already started a long time (>1 day) ago and not seen (initial bootstrap) mark as seen silently.
             if not is_upcoming and s.starts_at and now - s.starts_at > timedelta(days=1):
                 await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
@@ -102,43 +122,50 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 continue
 
             if is_upcoming:
-                # Always operate in event-only mode: attempt to create an event for upcoming seasons.
                 self.bot.logger.info(
                     f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event starts_at={s.starts_at}"
                 )
-                created = await self._create_event_for_season(guild, s)
-                if created:
-                    await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
+                event_id = await self._create_event_for_season(guild, s)
+                if event_id is not None:
+                    lm_iso = s.last_modified.isoformat() if s.last_modified else None
+                    await db.mark_season_seen(guild.id, s.game_slug, s.season_key, discord_event_id=str(event_id), last_modified=lm_iso)
                     self.bot.logger.info(
-                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_created"
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_created event_id={event_id}"
                     )
                 else:
-                    # Leave unmarked so we retry next poll in case of temporary failure (permissions, outage, etc.).
                     self.bot.logger.warning(
                         f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_failed will_retry=1"
                     )
-                    pass
             else:
-                # Season already started; since we only create events for future starts we mark it as seen silently.
+                # Season already started; mark as seen silently.
                 await db.mark_season_seen(guild.id, s.game_slug, s.season_key)
                 self.bot.logger.info(
                     f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=mark_seen started_already"
                 )
     # Message/embed sending removed: bot now operates strictly in scheduled-event mode.
 
-    async def _create_event_for_season(self, guild: discord.Guild, s: Season) -> bool:
+    def _build_event_description(self, s: Season) -> str:
+        parts = []
+        if s.url:
+            parts.append(f"🔗 [Season info]({s.url})")
+        if s.patch_notes_url:
+            parts.append(f"📋 [Patch notes]({s.patch_notes_url})")
+        parts.append("\n[Tracked by aRPG Timeline](https://www.arpg-timeline.com)")
+        return "\n".join(parts)
+
+    async def _create_event_for_season(self, guild: discord.Guild, s: Season) -> Optional[int]:
         # Create an external scheduled event if start time is in the future; allow any future start
         now = discord.utils.utcnow()
         start = s.starts_at
         if not start or start <= now:
-            return False
+            return None
         # Preflight permission check: bot must have Manage Events and Create Events
         me = guild.me or guild.get_member(self.bot.user.id)  # type: ignore[arg-type]
         if not me:
             self.bot.logger.warning(
                 f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck member_not_found"
             )
-            return False
+            return None
         perms = getattr(me, "guild_permissions", None)
         has_manage = bool(getattr(perms, "manage_events", False)) if perms else False
         has_create = bool(getattr(perms, "create_events", False)) if perms else False
@@ -146,12 +173,13 @@ class ARPGTimeline(commands.Cog, name="arpg"):
             self.bot.logger.warning(
                 f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_precheck missing_permissions=manage_events,create_events"
             )
-            return False
+            return None
         end = start + timedelta(hours=2)
         name = f"{s.game_name}: {s.title}"
-        description = s.url or "New season tracked by aRPG Timeline"
+        description = self._build_event_description(s)
+        image = await self.api.fetch_og_image(s.season_key)
         try:
-            await guild.create_scheduled_event(
+            event = await guild.create_scheduled_event(
                 name=name,
                 start_time=start,
                 end_time=end,
@@ -159,16 +187,40 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 entity_type=discord.EntityType.external,
                 location="aRPG Timeline",
                 description=description,
+                image=image,
             )
-            return True
+            return event.id
         except discord.Forbidden as e:
             self.bot.logger.error(
                 f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event_forbidden detail=Missing_Permissions error={e}"
             )
-            return False
+            return None
         except Exception as e:
             self.bot.logger.error(
                 f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=create_event_error error={e}"
+            )
+            return None
+
+    async def _update_event_for_season(self, guild: discord.Guild, s: Season, event_id: int) -> bool:
+        try:
+            event = await guild.fetch_scheduled_event(event_id)
+        except discord.NotFound:
+            return False
+        except Exception as e:
+            self.bot.logger.error(
+                f"guild={guild.id} season_key={s.season_key} action=fetch_event_error error={e}"
+            )
+            return False
+        name = f"{s.game_name}: {s.title}"
+        description = self._build_event_description(s)
+        end = (s.starts_at + timedelta(hours=2)) if s.starts_at else None
+        image = await self.api.fetch_og_image(s.season_key)
+        try:
+            await event.edit(name=name, description=description, start_time=s.starts_at, end_time=end, image=image)
+            return True
+        except Exception as e:
+            self.bot.logger.error(
+                f"guild={guild.id} season_key={s.season_key} action=update_event_error error={e}"
             )
             return False
 
