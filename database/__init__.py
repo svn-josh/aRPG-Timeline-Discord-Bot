@@ -55,18 +55,34 @@ class DatabaseManager:
         await self.connection.commit()
 
     # ---------------- aRPG Timeline - Season Cache ----------------
-    async def is_season_seen(self, guild_id: int | str, game_slug: str, season_key: str) -> bool:
+    async def get_season_cache_entry(self, guild_id: int | str, game_slug: str, season_key: str) -> dict | None:
         rows = await self.connection.execute(
-            "SELECT 1 FROM season_cache WHERE guild_id=? AND game_slug=? AND season_key=?",
+            "SELECT discord_event_id, last_modified FROM season_cache WHERE guild_id=? AND game_slug=? AND season_key=?",
             (str(guild_id), game_slug, season_key),
         )
         async with rows as cursor:
-            return (await cursor.fetchone()) is not None
+            res = await cursor.fetchone()
+            if res is None:
+                return None
+            return {"discord_event_id": res[0], "last_modified": res[1]}
 
-    async def mark_season_seen(self, guild_id: int | str, game_slug: str, season_key: str) -> None:
+    async def mark_season_seen(
+        self, guild_id: int | str, game_slug: str, season_key: str,
+        discord_event_id: str | None = None, last_modified: str | None = None,
+    ) -> None:
         await self.connection.execute(
-            "INSERT OR IGNORE INTO season_cache(guild_id, game_slug, season_key) VALUES(?, ?, ?)",
-            (str(guild_id), game_slug, season_key),
+            "INSERT OR IGNORE INTO season_cache(guild_id, game_slug, season_key, discord_event_id, last_modified) VALUES(?, ?, ?, ?, ?)",
+            (str(guild_id), game_slug, season_key, discord_event_id, last_modified),
+        )
+        await self.connection.commit()
+
+    async def update_season_cache(
+        self, guild_id: int | str, game_slug: str, season_key: str,
+        discord_event_id: str | None, last_modified: str | None,
+    ) -> None:
+        await self.connection.execute(
+            "UPDATE season_cache SET discord_event_id=?, last_modified=? WHERE guild_id=? AND game_slug=? AND season_key=?",
+            (discord_event_id, last_modified, str(guild_id), game_slug, season_key),
         )
         await self.connection.commit()
 

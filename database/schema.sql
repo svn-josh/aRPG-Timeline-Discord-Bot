@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS `guild_games` (
 CREATE TABLE IF NOT EXISTS `season_cache` (
   `guild_id` varchar(20) NOT NULL,
   `game_slug` varchar(50) NOT NULL,
-  `season_key` varchar(200) NOT NULL, -- season id/slug or computed key
+  `season_key` varchar(200) NOT NULL, -- stable API UUID
+  `discord_event_id` text,            -- ID of the created Discord scheduled event
+  `last_modified` text,               -- ISO 8601 lastModified from API, for detecting updates
   `notified_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`guild_id`, `game_slug`, `season_key`)
 );

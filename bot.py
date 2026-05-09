@@ -157,6 +157,17 @@ class DiscordBot(commands.Bot):
                 await db.executescript(file.read())
             await db.commit()
 
+    async def _run_migrations(self) -> None:
+        db_path = f"{os.path.realpath(os.path.dirname(__file__))}/database/database.db"
+        async with aiosqlite.connect(db_path) as db:
+            # Check whether the new columns already exist
+            cursor = await db.execute("PRAGMA table_info(season_cache)")
+            columns = {row[1] async for row in cursor}
+            if "discord_event_id" not in columns:
+                await db.execute("ALTER TABLE season_cache ADD COLUMN discord_event_id text")
+                await db.execute("ALTER TABLE season_cache ADD COLUMN last_modified text")
+                await db.commit()
+
     async def load_cogs(self) -> None:
         """
         The code in this function is executed whenever the bot will start.
@@ -213,6 +224,7 @@ class DiscordBot(commands.Bot):
         self.logger.info("Command logging enabled for both prefix and slash commands")
         self.logger.info("-------------------")
         await self.init_db()
+        await self._run_migrations()
         # Open the DB connection and set DatabaseManager before loading cogs
         self.database = DatabaseManager(
             connection=await aiosqlite.connect(
