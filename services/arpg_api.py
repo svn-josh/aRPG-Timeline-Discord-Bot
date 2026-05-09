@@ -30,6 +30,7 @@ class Season:
     ends_at: Optional[datetime]
     url: Optional[str]
     patch_notes_url: Optional[str]
+    last_modified: Optional[datetime] = None
 
 
 def _to_dt(value: Optional[str]) -> Optional[datetime]:
@@ -58,10 +59,14 @@ def _normalize_game(raw: Dict[str, Any]) -> Optional[Game]:
     return Game(slug=slug, name=name, season_keyword=season_keyword, categories=categories)
 
 
-def _current_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
+def _current_season_from_entry(
+    entry: Dict[str, Any],
+    games_by_slug: Optional[Dict[str, str]] = None,
+) -> Optional[Season]:
     """Build a Season object from the 'current' block of a games/seasons entry."""
     game_slug = str(entry.get("game") or "").strip().lower()
-    game_name = game_slug.replace("-", " ").title() if game_slug else "Unknown"
+    fallback = game_slug.replace("-", " ").title() if game_slug else "Unknown"
+    game_name = (games_by_slug or {}).get(game_slug, fallback)
     block = entry.get("current") or {}
     if not isinstance(block, dict):
         return None
@@ -70,9 +75,8 @@ def _current_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
     ends_at = _to_dt(block.get("end"))
     url = block.get("url") or None
     patch_notes_url = block.get("patchNotesUrl") or None
-    season_key = str(block.get("name") or block.get("id") or block.get("slug") or block.get("code") or "")
-    if starts_at:
-        season_key = f"{season_key}:{int(starts_at.timestamp())}"
+    season_key = str(entry.get("id") or "").strip()
+    last_modified = _to_dt(entry.get("lastModified"))
     if not season_key:
         return None
     return Season(
@@ -84,13 +88,18 @@ def _current_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
         ends_at=ends_at,
         url=url,
         patch_notes_url=patch_notes_url,
+        last_modified=last_modified,
     )
 
 
-def _next_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
+def _next_season_from_entry(
+    entry: Dict[str, Any],
+    games_by_slug: Optional[Dict[str, str]] = None,
+) -> Optional[Season]:
     """Build a Season object from the 'next' block (upcoming) if present."""
     game_slug = str(entry.get("game") or "").strip().lower()
-    game_name = game_slug.replace("-", " ").title() if game_slug else "Unknown"
+    fallback = game_slug.replace("-", " ").title() if game_slug else "Unknown"
+    game_name = (games_by_slug or {}).get(game_slug, fallback)
     block = entry.get("next") or {}
     if not isinstance(block, dict) or not block:
         return None
@@ -99,14 +108,10 @@ def _next_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
     ends_at = _to_dt(block.get("end"))
     url = block.get("url") or None
     patch_notes_url = block.get("patchNotesUrl") or None
-    season_key_base = str(block.get("name") or block.get("id") or block.get("slug") or block.get("code") or "")
-    if starts_at:
-        season_key = f"{season_key_base}:{int(starts_at.timestamp())}"
-    else:
-        season_key = season_key_base
+    season_key = str(block.get("id") or "").strip()
+    last_modified = _to_dt(block.get("lastModified"))
     if not season_key:
         return None
-    # Intentionally no prefix so when 'next' becomes 'current' it yields same key; prevents duplicate.
     return Season(
         game_slug=game_slug,
         game_name=game_name,
@@ -116,6 +121,7 @@ def _next_season_from_entry(entry: Dict[str, Any]) -> Optional[Season]:
         ends_at=ends_at,
         url=url,
         patch_notes_url=patch_notes_url,
+        last_modified=last_modified,
     )
 
 
@@ -385,12 +391,15 @@ class ARPGApiClient:
         elif isinstance(data, list):
             items = data
 
+        games = await self.get_cached_games()
+        games_by_slug = {g.slug: g.name for g in games}
+
         out: List[Season] = []
         for entry in items:
-            cur = _current_season_from_entry(entry)
+            cur = _current_season_from_entry(entry, games_by_slug)
             if cur:
                 out.append(cur)
-            nxt = _next_season_from_entry(entry)
+            nxt = _next_season_from_entry(entry, games_by_slug)
             if nxt:
                 # Skip if duplicate key already present (same key logic as current)
                 if not any(existing.season_key == nxt.season_key and existing.game_slug == nxt.game_slug for existing in out):
@@ -438,7 +447,7 @@ class ARPGApiClient:
                 self.logger.warning(f"Cache write failed: {e}")
         return games
 
-    async def get_cached_active_seasons(self, ttl_minutes: int = 5, force_refresh: bool = False) -> List[Season]:
+    async def get_cached_active_seasons(self, ttl_minutes: int = 15, force_refresh: bool = False) -> List[Season]:
         """Return cached active seasons (via /games/seasons) if fresh unless force_refresh is True."""
         key = "seasons:active"
         now = datetime.now(timezone.utc)
@@ -468,6 +477,7 @@ class ARPGApiClient:
                                         ends_at=ends,
                                         url=obj.get("url"),
                                         patch_notes_url=obj.get("patch_notes_url"),
+                                        last_modified=_to_dt(obj.get("last_modified")),
                                     ))
                                 except Exception:
                                     continue
@@ -491,6 +501,7 @@ class ARPGApiClient:
                         "ends_at": s.ends_at.isoformat() if s.ends_at else None,
                         "url": s.url,
                         "patch_notes_url": s.patch_notes_url,
+                        "last_modified": s.last_modified.isoformat() if s.last_modified else None,
                     }
                     for s in seasons
                 ])
