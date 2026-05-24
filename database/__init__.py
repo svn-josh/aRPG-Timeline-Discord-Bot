@@ -76,6 +76,15 @@ class DatabaseManager:
         )
         await self.connection.commit()
 
+    async def get_season_cache_entries_with_events(self, guild_id: int | str) -> list[dict]:
+        """Return all cache rows for the guild that have a discord_event_id set."""
+        rows = await self.connection.execute(
+            "SELECT game_slug, season_key, discord_event_id FROM season_cache WHERE guild_id=? AND discord_event_id IS NOT NULL",
+            (str(guild_id),),
+        )
+        async with rows as cursor:
+            return [{"game_slug": r[0], "season_key": r[1], "discord_event_id": r[2]} async for r in cursor]
+
     async def update_season_cache(
         self, guild_id: int | str, game_slug: str, season_key: str,
         discord_event_id: str | None, last_modified: str | None,

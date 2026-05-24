@@ -99,17 +99,28 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                     continue
                 stored_event_id = int(cache_entry["discord_event_id"]) if cache_entry.get("discord_event_id") else None
                 new_event_id = stored_event_id
-                if stored_event_id:
+                if not s.starts_at and stored_event_id:
+                    await self._delete_event_for_season(guild, s.season_key, stored_event_id)
+                    await db.update_season_cache(guild.id, s.game_slug, s.season_key, None, api_lm)
+                    self.bot.logger.info(
+                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_deleted reason=starts_at_undefined event_id={stored_event_id}"
+                    )
+                elif stored_event_id:
                     updated = await self._update_event_for_season(guild, s, stored_event_id)
                     if not updated:
                         new_event_id = await self._create_event_for_season(guild, s)
+                    if new_event_id is not None:
+                        await db.update_season_cache(guild.id, s.game_slug, s.season_key, str(new_event_id), api_lm)
+                        self.bot.logger.info(
+                            f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_updated event_id={new_event_id}"
+                        )
                 else:
                     new_event_id = await self._create_event_for_season(guild, s)
-                if new_event_id is not None:
-                    await db.update_season_cache(guild.id, s.game_slug, s.season_key, str(new_event_id), api_lm)
-                    self.bot.logger.info(
-                        f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_updated event_id={new_event_id}"
-                    )
+                    if new_event_id is not None:
+                        await db.update_season_cache(guild.id, s.game_slug, s.season_key, str(new_event_id), api_lm)
+                        self.bot.logger.info(
+                            f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=event_updated event_id={new_event_id}"
+                        )
                 continue
 
             # New season — bootstrap or create
@@ -142,6 +153,20 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 self.bot.logger.info(
                     f"guild={guild.id} game={s.game_slug} season_key={s.season_key} action=mark_seen started_already"
                 )
+        # Remove Discord events for seasons that have disappeared from the API response.
+        api_keys = {(s.game_slug, s.season_key) for s in seasons if game_toggles.get(s.game_slug, 0)}
+        cached_entries = await db.get_season_cache_entries_with_events(guild.id)
+        for entry in cached_entries:
+            key = (entry["game_slug"], entry["season_key"])
+            if key not in api_keys and game_toggles.get(entry["game_slug"], 0):
+                event_id = int(entry["discord_event_id"])
+
+                await self._delete_event_for_season(guild, entry["season_key"], event_id)
+                await db.update_season_cache(guild.id, entry["game_slug"], entry["season_key"], None, None)
+                self.bot.logger.info(
+                    f"guild={guild.id} game={entry['game_slug']} season_key={entry['season_key']} action=event_deleted reason=removed_from_api event_id={event_id}"
+                )
+
     # Message/embed sending removed: bot now operates strictly in scheduled-event mode.
 
     def _build_event_description(self, s: Season) -> str:
@@ -223,6 +248,17 @@ class ARPGTimeline(commands.Cog, name="arpg"):
                 f"guild={guild.id} season_key={s.season_key} action=update_event_error error={e}"
             )
             return False
+
+    async def _delete_event_for_season(self, guild: discord.Guild, season_key: str, event_id: int) -> None:
+        try:
+            event = await guild.fetch_scheduled_event(event_id)
+            await event.delete()
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            self.bot.logger.error(
+                f"guild={guild.id} season_key={season_key} action=delete_event_error error={e}"
+            )
 
     # ------------- Commands (guild owner only) -------------
     def _ensure_guild_owner(self, interaction: discord.Interaction) -> Tuple[bool, Optional[str]]:
